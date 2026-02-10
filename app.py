@@ -7,66 +7,40 @@ import math
 from datetime import datetime, timedelta
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="Ultimate Hedge Fund Terminal", page_icon="⚖️", layout="wide")
-st.title("⚖️ The Ultimate Hedge Fund Terminal")
-st.markdown("### 🌎 Global Scope | 📊 Graham Valuation | 🎯 Options Alpha")
+st.set_page_config(page_title="Medallion Terminal", page_icon="🧬", layout="wide")
+st.title("🧬 The Medallion Terminal (Ultimate AI)")
+st.markdown("### 🧠 Fundamentals (Graham) + ⚡ Mean Reversion (Z-Score) + 🌊 TOC Squeeze")
 
-# --- 2. USER GUIDE & DISCLAIMER ---
-with st.expander("📖 HOW TO USE & METHODOLOGY (Click to Expand)", expanded=True):
+# --- 2. USER GUIDE ---
+with st.expander("📖 READ ME: The Strategy Guide", expanded=False):
     st.markdown("""
-    ### 🎯 What is this tool for?
-    This terminal is an **algorithmic scanner** designed to find mathematical discrepancies in the stock market. It does not "predict" the future; it identifies where assets are mispriced relative to their intrinsic value or statistical norms.
+    ### 1. The "Medallion" Signals (Technical)
+    * **Z-Score:** How rare is this price?
+        * `> 2.0`: Statistically Expensive (Likely to drop/revert).
+        * `< -2.0`: Statistically Cheap (Likely to bounce).
+    * **TOC State (Constraint):**
+        * `🔒 SQUEEZE`: Volatility is dead. A massive explosive move is imminent.
+        * `🌊 EXPANSION`: The move is happening now.
 
-    ### ⚙️ The Mathematical Models
-    1.  **Graham Fair Value (The "Value" Engine):**
-        * Based on Benjamin Graham's formula: $V = \\sqrt{22.5 \\times EPS \\times BookValue}$.
-        * It tells you what the company is worth based on its hard assets and earnings, ignoring hype.
-    2.  **Black-Scholes Model (The "Options" Engine):**
-        * Calculates the theoretical "Fair Price" of an option contract based on volatility and time.
-        * If the Market Price is lower than this number, the option is statistically "On Sale."
-    3.  **Kelly Criterion (The "Money Management" Engine):**
-        * Calculates the exact percentage of your capital to risk to maximize growth while preventing ruin.
+    ### 2. The "Buffett" Signals (Fundamental)
+    * **Graham Value:** The "true" worth of the company based on assets & earnings.
+    * **Safety Margin:** Green means it's selling for less than it's worth.
 
-    ### ⚠️ RISK FREE RATE EXPLAINED
-    * **Definition:** The theoretical return of an investment with zero risk (like a Government Bond).
-    * **Why it matters:** It is the "gravity" of finance. Higher rates pull asset prices down.
-    * **In this App:** We use **4.5% for US Stocks** (US Treasury) and **11.25% for Brazilian Stocks** (Selic Rate). This ensures the math is accurate for both economies.
+    ### 3. The "Execution" (Options)
+    * **Edge %:** The mathematical advantage of the option contract.
+    * **Kelly %:** How much capital to risk.
     """)
 
-# --- 3. SIDEBAR CONFIGURATION ---
-with st.sidebar:
-    st.header("⚙️ Market Settings")
-    
-    # DUAL RISK FREE RATES (Crucial for accuracy)
-    col1, col2 = st.columns(2)
-    with col1:
-        rf_us = st.number_input("🇺🇸 US Rate %", value=4.5, help="US 10-Year Treasury Yield") / 100
-    with col2:
-        rf_br = st.number_input("🇧🇷 BRL Rate %", value=11.25, help="Brazil Selic Rate") / 100
-        
-    st.markdown("---")
-    st.error("""
-    **🚨 DISCLAIMER & LIABILITY**
-    
-    This software is for **educational and research purposes only**. 
-    
-    * **I am NOT a financial advisor.**
-    * The signals generated are based on mathematical probabilities, not guarantees.
-    * **You are 100% liable** for any financial losses incurred by using this data.
-    * Options trading involves significant risk and is not suitable for all investors.
-    """)
-
-# --- 4. MATH FORMULAS ---
+# --- 3. MATH FORMULAS ---
 def black_scholes(S, K, T, r, sigma, option_type="call"):
     try:
         d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
         if option_type == "call":
-            price = (S * si.norm.cdf(d1, 0.0, 1.0) - K * np.exp(-r * T) * si.norm.cdf(d2, 0.0, 1.0))
+            return max(S * si.norm.cdf(d1) - K * np.exp(-r * T) * si.norm.cdf(d2), 0)
         else:
-            price = (K * np.exp(-r * T) * si.norm.cdf(-d2, 0.0, 1.0) - S * si.norm.cdf(-d1, 0.0, 1.0))
-        return max(price, 0.0)
-    except: return 0.0
+            return max(K * np.exp(-r * T) * si.norm.cdf(-d2) - S * si.norm.cdf(-d1), 0)
+    except: return 0
 
 def calculate_graham_value(eps, book_value):
     if eps > 0 and book_value > 0:
@@ -88,95 +62,92 @@ def generate_sparkline(series):
         spark += bar_chars[idx]
     return spark
 
-# --- 5. DATA FETCHING ---
+# --- 4. SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    rf_us = st.number_input("🇺🇸 US Risk Free %", value=4.5) / 100
+    rf_br = st.number_input("🇧🇷 BRL Risk Free %", value=11.25) / 100
+    st.info("ℹ️ Scanning ~700 assets. Allow 3-4 minutes.")
+
+# --- 5. DATA ENGINE ---
 @st.cache_data(ttl=3600)
 def get_universe():
-    # 1. S&P 500 (US)
     try:
         sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]['Symbol'].tolist()
         sp500 = [x.replace('.', '-') for x in sp500]
-    except:
-        sp500 = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "BRK-B", "JPM", "V"]
-        
-    # 2. Brazil Top Liquid
+    except: sp500 = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN"]
+    
     brazil = [
-        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA",
-        "ABEV3.SA", "RENT3.SA", "BPAC11.SA", "SUZB3.SA", "HAPV3.SA", "RDOR3.SA",
-        "B3SA3.SA", "EQTL3.SA", "LREN3.SA", "PRIO3.SA", "RAIL3.SA", "GGBR4.SA",
-        "JBSS3.SA", "RADL3.SA", "VBBR3.SA", "CSAN3.SA", "TOTS3.SA", "BBSE3.SA",
+        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA",
+        "RENT3.SA", "SUZB3.SA", "GGBR4.SA", "JBSS3.SA", "CSAN3.SA", "BBSE3.SA", "ELET3.SA",
         "MELI", "NU", "PBR", "BSBR", "BBD"
     ]
-    # 3. ETFs
     etfs = ["SPY", "QQQ", "IWM", "GLD", "SLV", "TLT", "XLE", "XLF"]
-    
     return list(set(sp500 + brazil + etfs))
 
-# --- 6. MAIN ENGINE ---
 @st.cache_data(ttl=3600)
 def run_scan(rf_us, rf_br):
     tickers = get_universe()
     data_list = []
     
-    progress_text = f"Scanning {len(tickers)} Assets... (Please wait ~3 mins)"
+    progress_text = f"Crunching Numbers (Z-Scores, TOC, Black-Scholes)..."
     my_bar = st.progress(0, text=progress_text)
     
-    # Bulk Download
     try:
         hist_data = yf.download(tickers, period="6mo", group_by='ticker', threads=True, progress=False)
     except: return pd.DataFrame()
 
     for i, ticker in enumerate(tickers):
         try:
-            # 1. Determine Region & Rate
-            if ".SA" in ticker:
-                region = "🇧🇷 Brazil"
-                r = rf_br
-            elif ticker in ["SPY", "QQQ", "IWM", "GLD", "SLV", "TLT", "XLE", "XLF"]:
-                region = "🛡️ ETF"
-                r = rf_us
-            else:
-                region = "🇺🇸 USA"
-                r = rf_us
+            # 1. SETUP
+            if ".SA" in ticker: r, region = rf_br, "🇧🇷 Brazil"
+            elif ticker in ["SPY", "QQQ", "IWM"]: r, region = rf_us, "🛡️ ETF"
+            else: r, region = rf_us, "🇺🇸 USA"
 
-            # 2. Price Data
             df = hist_data[ticker] if len(tickers) > 1 else hist_data
             if df.empty or len(df) < 50: continue
             
             close = df['Close'].dropna()
             current_price = close.iloc[-1]
-            
-            # Trend & Volatility
-            sma_50 = close.rolling(50).mean().iloc[-1]
-            trend_dir = "🐂 Bull" if current_price > sma_50 else "🐻 Bear"
             spark = generate_sparkline(close)
-            
-            daily_returns = close.pct_change().dropna()
-            hist_vol = daily_returns.std() * np.sqrt(252)
 
-            # 3. Fair Value (Graham)
+            # 2. MEDALLION METRICS (Z-Score & TOC)
+            # A. Z-Score (Mean Reversion)
+            ma_50 = close.rolling(50).mean().iloc[-1]
+            std_50 = close.rolling(50).std().iloc[-1]
+            z_score = (current_price - ma_50) / std_50 if std_50 > 0 else 0
+            
+            # B. TOC (Bollinger Squeeze)
+            sma_20 = close.rolling(20).mean()
+            std_20 = close.rolling(20).std()
+            upper = sma_20 + (std_20 * 2)
+            lower = sma_20 - (std_20 * 2)
+            bandwidth = ((upper - lower) / sma_20) * 100
+            bw_current = bandwidth.iloc[-1]
+            bw_avg = bandwidth.rolling(50).mean().iloc[-1]
+            
+            toc_state = "Neutral"
+            if bw_current < (bw_avg * 0.7): toc_state = "🔒 SQUEEZE" # High Potential Energy
+            elif bw_current > (bw_avg * 1.5): toc_state = "🌊 EXPANSION"
+
+            # 3. BUFFETT METRICS (Graham)
             fair_value = 0
             safety_margin = 0
-            
             if region != "🛡️ ETF" and current_price > 5:
                 try:
                     info = yf.Ticker(ticker).info
-                    eps = info.get('trailingEps', 0)
-                    bvps = info.get('bookValue', 0)
-                    fair_value = calculate_graham_value(eps, bvps)
-                    
+                    fair_value = calculate_graham_value(info.get('trailingEps', 0), info.get('bookValue', 0))
                     if fair_value > 0:
                         safety_margin = ((fair_value - current_price) / fair_value) * 100
                 except: pass
 
-            # 4. Options Engine
-            best_contract = "N/A"
-            edge_percent = 0.0
-            kelly_pct = 0.0
+            # 4. OPTIONS METRICS (Black-Scholes)
+            best_opt, edge_pct, kelly_pct = "N/A", 0.0, 0.0
             
-            # Filter to save time
-            is_interesting = (safety_margin > 10 or hist_vol > 0.40 or region == "🇧🇷 Brazil")
+            # Smart Trigger: Only check options if there is a signal (Z-Score extreme or TOC Squeeze or Value)
+            signal_active = (abs(z_score) > 2.0) or (toc_state == "🔒 SQUEEZE") or (safety_margin > 15)
             
-            if is_interesting and current_price > 5:
+            if signal_active and current_price > 5:
                 try:
                     stock = yf.Ticker(ticker)
                     exps = stock.options
@@ -185,36 +156,38 @@ def run_scan(rf_us, rf_br):
                         days = (datetime.strptime(target_date, "%Y-%m-%d") - datetime.now()).days
                         T = days / 365
                         
-                        opt_type = "call" if trend_dir == "🐂 Bull" else "put"
+                        # Direction: Z-Score < -2 (Oversold) -> Call. Z-Score > 2 (Overbought) -> Put.
+                        if z_score < -1.5: opt_type = "call"
+                        elif z_score > 1.5: opt_type = "put"
+                        else: opt_type = "call" if current_price > ma_50 else "put" # Trend follow if no Z signal
+
                         chain = stock.option_chain(target_date)
                         opts = chain.calls if opt_type == "call" else chain.puts
                         opts = opts[(opts['strike'] > current_price * 0.95) & (opts['strike'] < current_price * 1.05)]
                         
                         if not opts.empty:
                             row = opts.iloc[0]
-                            bs_price = black_scholes(current_price, row['strike'], T, r, hist_vol, opt_type)
-                            mkt_price = row['lastPrice']
-                            
-                            if mkt_price > 0:
-                                edge_percent = ((bs_price - mkt_price) / mkt_price) * 100
+                            bs = black_scholes(current_price, row['strike'], T, r, std_50, opt_type) # Use hist vol
+                            mkt = row['lastPrice']
+                            if mkt > 0:
+                                edge_pct = ((bs - mkt) / mkt) * 100
                                 symbol = "C" if opt_type == "call" else "P"
-                                best_contract = f"${row['strike']} {symbol} ({target_date})"
-                                
-                                if edge_percent > 0:
-                                    kelly_pct = kelly_criterion(0.55, 2.5) * 100
+                                best_opt = f"${row['strike']} {symbol}"
+                                if edge_pct > 0: kelly_pct = kelly_criterion(0.55, 2.5) * 100
                 except: pass
 
             data_list.append({
                 "Ticker": ticker,
                 "Region": region,
                 "Price": current_price,
-                "Trend": spark,
+                "Z-Score": z_score,
+                "TOC": toc_state,
                 "Fair Value": fair_value,
                 "Safety Margin %": safety_margin,
-                "Direction": trend_dir,
-                "Best Option": best_contract,
-                "Edge %": edge_percent,
-                "Kelly %": kelly_pct
+                "Best Option": best_opt,
+                "Edge %": edge_pct,
+                "Kelly %": kelly_pct,
+                "Trend": spark
             })
             
         except: continue
@@ -223,54 +196,42 @@ def run_scan(rf_us, rf_br):
     my_bar.empty()
     return pd.DataFrame(data_list)
 
-# --- 7. RENDER ---
-if st.button("🚀 Run Full Analysis"):
+# --- 6. RENDER ---
+if st.button("🚀 Run Medallion Scan"):
     st.cache_data.clear()
 
 df = run_scan(rf_us, rf_br)
 
 if not df.empty:
-    tab1, tab2, tab3 = st.tabs(["🇺🇸 US Stocks", "🇧🇷 Brazil Stocks", "🛡️ ETFs"])
+    tab1, tab2, tab3 = st.tabs(["🇺🇸 US Stocks", "🇧🇷 Brazil", "🛡️ ETFs"])
     
-    col_config = {
+    cols = {
         "Ticker": st.column_config.TextColumn("Symbol"),
         "Price": st.column_config.NumberColumn("Price", format="%.2f"),
-        "Fair Value": st.column_config.NumberColumn("Graham Value", format="%.2f"),
-        "Safety Margin %": st.column_config.NumberColumn("Safety Margin", format="%.1f%%"),
-        "Edge %": st.column_config.NumberColumn("Option Edge", format="%.1f%%"),
+        "Z-Score": st.column_config.NumberColumn("Z-Score (Mean Rev)", format="%.2f"),
+        "Safety Margin %": st.column_config.NumberColumn("Value Gap", format="%.1f%%"),
+        "Edge %": st.column_config.NumberColumn("Opt Edge", format="%.1f%%"),
         "Kelly %": st.column_config.NumberColumn("Bet Size", format="%.1f%%"),
-        "Trend": st.column_config.TextColumn("30d History")
+        "Trend": st.column_config.TextColumn("Chart")
     }
-    
+
     with tab1:
-        st.subheader("🇺🇸 US Opportunities (USD)")
+        st.subheader("🇺🇸 US Opportunities")
+        # Sort by Z-Score divergence (absolute value) to find anomalies
         df_us = df[df["Region"] == "🇺🇸 USA"].sort_values(by="Edge %", ascending=False)
-        st.dataframe(
-            df_us.style.background_gradient(subset=['Edge %', 'Safety Margin %'], cmap='RdYlGn', vmin=-10, vmax=30),
-            column_config=col_config, 
-            use_container_width=True, 
-            hide_index=True
-        )
+        st.dataframe(df_us.style.background_gradient(subset=['Z-Score', 'Edge %'], cmap='RdYlGn', vmin=-3, vmax=3),
+                     column_config=cols, use_container_width=True, hide_index=True)
 
     with tab2:
-        st.subheader("🇧🇷 Brazil Opportunities (BRL)")
-        df_br = df[df["Region"] == "🇧🇷 Brazil"].sort_values(by="Safety Margin %", ascending=False)
-        st.dataframe(
-            df_br.style.background_gradient(subset=['Safety Margin %'], cmap='RdYlGn', vmin=-10, vmax=30),
-            column_config=col_config, 
-            use_container_width=True, 
-            hide_index=True
-        )
+        st.subheader("🇧🇷 Brazil Opportunities")
+        df_br = df[df["Region"] == "🇧🇷 Brazil"].sort_values(by="Edge %", ascending=False)
+        st.dataframe(df_br.style.background_gradient(subset=['Z-Score', 'Safety Margin %'], cmap='RdYlGn', vmin=-3, vmax=3),
+                     column_config=cols, use_container_width=True, hide_index=True)
 
     with tab3:
         st.subheader("🛡️ Global ETFs")
         df_etf = df[df["Region"] == "🛡️ ETF"]
-        st.dataframe(
-            df_etf, 
-            column_config=col_config, 
-            use_container_width=True, 
-            hide_index=True
-        )
+        st.dataframe(df_etf, column_config=cols, use_container_width=True, hide_index=True)
 
 else:
-    st.info("Click 'Run Full Analysis' to begin.")
+    st.info("Click 'Run Medallion Scan' to start. This searches for Fundamentals, Technical Anomalies (Z-Score), and Volatility Squeezes (TOC).")
