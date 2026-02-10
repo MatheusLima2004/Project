@@ -46,14 +46,13 @@ def generate_sparkline(series):
         spark += bar_chars[idx]
     return spark
 
-@st.cache_data(ttl=3600) # Cache data for 1 hour to prevent Yahoo bans
+@st.cache_data(ttl=3600) 
 def scan_market(tickers):
-    # Progress Bar
     progress_text = "Scanning Global Markets... Please wait."
     my_bar = st.progress(0, text=progress_text)
     
     try:
-        # Bulk Download (Threads enabled for speed)
+        # Bulk Download
         history = yf.download(tickers, period="6mo", group_by='ticker', threads=True, progress=False)
     except Exception as e:
         st.error(f"Error connecting to Yahoo Finance: {e}")
@@ -70,6 +69,101 @@ def scan_market(tickers):
             close = df['Close'].dropna()
             current_price = close.iloc[-1]
             
-            # Technicals
+            # --- TECHNICALS (Broken into steps to avoid copy errors) ---
+            
+            # 1. Moving Average (50 day)
             ma_50 = close.rolling(window=50).mean().iloc[-1]
-            std_50 = close.rolling(window=5
+            
+            # 2. Standard Deviation (50 day)
+            std_50 = close.rolling(window=50).std().iloc[-1]
+            
+            # 3. Z-Score Calculation
+            if std_50 > 0:
+                z_score = (current_price - ma_50) / std_50
+            else:
+                z_score = 0
+            
+            trend = generate_sparkline(close)
+            
+            # --- FUNDAMENTALS ---
+            info = yf.Ticker(ticker).info
+            roe = info.get('returnOnEquity', 0)
+            debt_eq = info.get('debtToEquity', 0)
+            target = info.get('targetMeanPrice', current_price)
+            
+            # Formats
+            roe_fmt = roe * 100 if roe else 0
+            upside = ((target - current_price) / current_price) * 100
+            
+            # --- SCORING ---
+            score = 50
+            if roe_fmt > 15: score += 15
+            if debt_eq < 100 and debt_eq > 0: score += 10
+            if z_score < -1.5: score += 10
+            if upside > 20: score += 15
+            
+            # Signal
+            signal = "HOLD"
+            if score >= 80: signal = "💎 STRONG BUY"
+            elif score <= 40: signal = "⚠️ AVOID"
+            elif z_score <= -2.0: signal = "🛒 OVERSOLD"
+            
+            results.append({
+                "Ticker": ticker,
+                "Price": current_price,
+                "Trend": trend,
+                "Z-Score": z_score,
+                "ROE %": roe_fmt,
+                "Upside %": upside,
+                "Score": score,
+                "Signal": signal
+            })
+            
+        except Exception:
+            continue
+            
+        # Update Progress
+        my_bar.progress((i + 1) / len(tickers))
+        
+    my_bar.empty()
+    return pd.DataFrame(results)
+
+# --- 4. MAIN APP LOGIC ---
+if st.button("🔄 Run Scanner"):
+    st.cache_data.clear()
+
+# Run the scan
+df = scan_market(tickers)
+
+if not df.empty:
+    # Sort by Score
+    df = df.sort_values(by="Score", ascending=False)
+    
+    # Display Interactive Table
+    st.dataframe(
+        df.style.background_gradient(subset=['Score'], cmap='RdYlGn', vmin=30, vmax=90)
+          .format({"Price": "${:.2f}", "Z-Score": "{:+.2f}", "ROE %": "{:.1f}%", "Upside %": "{:+.1f}%"}),
+        column_config={
+            "Trend": st.column_config.TextColumn("30d Trend", help="Visual price history"),
+            "Signal": st.column_config.TextColumn("Verdict"),
+        },
+        height=800,
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # Download Button
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Results (CSV)", csv, "market_scan.csv", "text/csv")
+
+else:
+    st.warning("Click 'Run Scanner' to start.")
+
+# --- 5. GLOSSARY ---
+with st.expander("📖 Trader's Glossary (Click to Expand)"):
+    st.markdown("""
+    * **Z-Score:** How 'stretched' the price is. `<-2.0` is Cheap. `>+2.0` is Expensive.
+    * **Trend:** A 30-day mini-chart. Left is old, Right is new.
+    * **ROE %:** Return on Equity. `>15%` indicates a high-quality company.
+    * **Score:** Our custom 0-100 rating combining value, safety, and momentum.
+    """)
