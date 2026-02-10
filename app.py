@@ -17,7 +17,7 @@ st.markdown("### Real-Time Value & Momentum Scanner")
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # Default Watchlist (Your Portfolio + S&P 500 + Brazil + Tech)
+    # Default Watchlist
     default_tickers = """MELI, NU, PBR, BSBR, BBD, VALE, ITUB
 NVDA, AAPL, MSFT, AMZN, GOOGL, TSLA, META
 V, MA, JPM, KO, PEP, COST, MCD, DIS
@@ -71,3 +71,5 @@ def scan_market(tickers):
             current_price = close.iloc[-1]
             
             # Technicals
+            ma_50 = close.rolling(window=50).mean().iloc[-1]
+            std_50 = close.rolling(window=5
