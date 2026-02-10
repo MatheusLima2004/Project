@@ -120,6 +120,7 @@ def run_scan(rf_us, rf_br):
     progress_text = f"Scanning {len(tickers)} Assets... (Please wait ~3 mins)"
     my_bar = st.progress(0, text=progress_text)
     
+    # Bulk Download
     try:
         hist_data = yf.download(tickers, period="6mo", group_by='ticker', threads=True, progress=False)
     except: return pd.DataFrame()
@@ -156,7 +157,6 @@ def run_scan(rf_us, rf_br):
             fair_value = 0
             safety_margin = 0
             
-            # Skip heavy info fetch for ETFs to save time
             if region != "🛡️ ETF" and current_price > 5:
                 try:
                     info = yf.Ticker(ticker).info
@@ -173,7 +173,7 @@ def run_scan(rf_us, rf_br):
             edge_percent = 0.0
             kelly_pct = 0.0
             
-            # Smart Filter: Check options if Volatile OR Cheap
+            # Filter to save time
             is_interesting = (safety_margin > 10 or hist_vol > 0.40 or region == "🇧🇷 Brazil")
             
             if is_interesting and current_price > 5:
@@ -185,9 +185,7 @@ def run_scan(rf_us, rf_br):
                         days = (datetime.strptime(target_date, "%Y-%m-%d") - datetime.now()).days
                         T = days / 365
                         
-                        # Logic: Bull -> Calls, Bear -> Puts
                         opt_type = "call" if trend_dir == "🐂 Bull" else "put"
-                        
                         chain = stock.option_chain(target_date)
                         opts = chain.calls if opt_type == "call" else chain.puts
                         opts = opts[(opts['strike'] > current_price * 0.95) & (opts['strike'] < current_price * 1.05)]
@@ -247,4 +245,32 @@ if not df.empty:
     with tab1:
         st.subheader("🇺🇸 US Opportunities (USD)")
         df_us = df[df["Region"] == "🇺🇸 USA"].sort_values(by="Edge %", ascending=False)
-        st.dataframe(df_
+        st.dataframe(
+            df_us.style.background_gradient(subset=['Edge %', 'Safety Margin %'], cmap='RdYlGn', vmin=-10, vmax=30),
+            column_config=col_config, 
+            use_container_width=True, 
+            hide_index=True
+        )
+
+    with tab2:
+        st.subheader("🇧🇷 Brazil Opportunities (BRL)")
+        df_br = df[df["Region"] == "🇧🇷 Brazil"].sort_values(by="Safety Margin %", ascending=False)
+        st.dataframe(
+            df_br.style.background_gradient(subset=['Safety Margin %'], cmap='RdYlGn', vmin=-10, vmax=30),
+            column_config=col_config, 
+            use_container_width=True, 
+            hide_index=True
+        )
+
+    with tab3:
+        st.subheader("🛡️ Global ETFs")
+        df_etf = df[df["Region"] == "🛡️ ETF"]
+        st.dataframe(
+            df_etf, 
+            column_config=col_config, 
+            use_container_width=True, 
+            hide_index=True
+        )
+
+else:
+    st.info("Click 'Run Full Analysis' to begin.")
