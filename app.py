@@ -3,141 +3,116 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import scipy.stats as si
-import requests
-from bs4 import BeautifulSoup
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
 import time
 
-# --- 1. THE BRAIN: MULTI-SOURCE DATA ---
+# --- 1. THE MEGA-WATCHLIST ---
+def get_global_universe():
+    # US Markets (S&P 500 / Nasdaq 100 leaders)
+    us_leaders = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "AVGO", "V", "MA",
+        "JPM", "BAC", "UNH", "COST", "LLY", "HD", "PG", "NFLX", "AMD", "PLTR",
+        "ADBE", "CRM", "ORCL", "CSCO", "INTC", "QCOM", "TXN", "AMAT", "MU", "ISRG"
+    ]
+    # Brazilian Markets (B3)
+    br_leaders = [
+        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "ABEV3.SA", 
+        "WEGE3.SA", "B3SA3.SA", "RENT3.SA", "SUZB3.SA", "GGBR4.SA", "JBSS3.SA",
+        "RAIL3.SA", "EQTL3.SA", "VIVT3.SA", "PRIO3.SA", "LREN3.SA", "RDOR3.SA"
+    ]
+    # User's Personal Portfolio Focus
+    personal_focus = ["MELI", "NU", "PBR", "BSBR", "BBD", "VGT", "VOO"]
+    # ETFs & Indices
+    indices = ["SPY", "QQQ", "IWM", "EWZ", "GLD", "SLV"]
+    
+    return list(set(us_leaders + br_leaders + personal_focus + indices))
 
-def get_nasdaq_data(symbol):
-    """Fetches key data from NASDAQ's internal API"""
-    headers = {
-        'accept': 'application/json',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    try:
-        url = f'https://api.nasdaq.com/api/quote/{symbol}/summary?assetclass=stocks'
-        resp = requests.get(url, headers=headers, timeout=5).json()
-        return resp['data']['summaryData']
-    except: return {}
+# --- 2. MULTI-SOURCE ALGO ENGINE ---
+@st.cache_data(ttl=3600)
+def run_global_analysis(ticker_list):
+    # STEP 1: BATCH DOWNLOAD (Avoids the Ban)
+    # We download 60 days of hourly data for hundreds of stocks in ONE call
+    data = yf.download(ticker_list, period="60d", interval="1h", group_by='ticker', threads=True, progress=False)
+    
+    results = []
+    for ticker in ticker_list:
+        try:
+            df = data[ticker].dropna()
+            if df.empty or len(df) < 30: continue
 
-def get_finviz_news(symbol):
-    """Scrapes news headlines from FinViz"""
-    headers = {'user-agent': 'Mozilla/5.0'}
-    try:
-        url = f'https://finviz.com/quote.ashx?t={symbol}'
-        resp = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(resp.content, 'html.parser')
-        news_table = soup.find(id='news-table')
-        rows = news_table.findAll('tr')
-        return [r.a.get_text() for r in rows[:3]] # Top 3 headlines
-    except: return ["News currently unavailable"]
+            # --- VWAP ---
+            df['vwap'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
+            
+            # --- TOC SQUEEZE ---
+            sma = df['Close'].rolling(20).mean()
+            std = df['Close'].rolling(20).std()
+            atr = (df['High'] - df['Low']).rolling(20).mean()
+            squeeze = "🔒 SQUEEZE" if (sma - (2*std) > sma - (1.5*atr)).iloc[-1] else "🌊 EXPANSION"
 
-def get_medallion_metrics(ticker):
-    """The core algorithmic engine"""
-    try:
-        # 1. Fetch Price Data (Yahoo)
-        stock = yf.Ticker(ticker)
-        df = stock.history(period="60d", interval="1h")
-        if df.empty: return None
+            # --- ML LINEAR FORECAST ---
+            y = df['Close'].values
+            x = np.arange(len(y)).reshape(-1, 1)
+            model = LinearRegression().fit(x, y)
+            forecast = model.predict([[len(y) + 1]])[0]
 
-        # 2. VWAP & TWAP
-        df['vwap'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
-        twap = df['Close'].mean()
+            # --- PROBABILITY OF SUCCESS ---
+            sigma = df['Close'].pct_change().std() * np.sqrt(252 * 7)
+            dist = np.log(forecast / df['Close'].iloc[-1])
+            pop = si.norm.cdf(dist / (sigma * np.sqrt(1/12))) * 100
 
-        # 3. TOC Squeeze (Theory of Constraints)
-        sma = df['Close'].rolling(20).mean()
-        std = df['Close'].rolling(20).std()
-        atr = (df['High'] - df['Low']).rolling(20).mean()
-        squeeze = "🔒 SQUEEZE" if (sma - (2*std) > sma - (1.5*atr)).iloc[-1] else "🌊 EXPANSION"
+            results.append({
+                "Ticker": ticker,
+                "Price": df['Close'].iloc[-1],
+                "VWAP": df['vwap'].iloc[-1],
+                "TOC": squeeze,
+                "ML Target": forecast,
+                "Success %": pop
+            })
+        except: continue
+    return pd.DataFrame(results)
 
-        # 4. ML Forecast (Linear Regression)
-        y = df['Close'].values
-        x = np.arange(len(y)).reshape(-1, 1)
-        model = LinearRegression().fit(x, y)
-        forecast = model.predict([[len(y) + 1]])[0]
-
-        # 5. Options POP (Probability of Profit)
-        # Using Normal Distribution: POP = N(d2)
-        sigma = df['Close'].pct_change().std() * np.sqrt(252 * 7)
-        dist = np.log(forecast / df['Close'].iloc[-1])
-        pop = si.norm.cdf(dist / (sigma * np.sqrt(1/12))) * 100
-
-        # 6. Fundamental Spread (NASDAQ)
-        nasdaq = get_nasdaq_data(ticker)
-        news = get_finviz_news(ticker)
-
-        return {
-            "Ticker": ticker,
-            "Price": df['Close'].iloc[-1],
-            "VWAP": df['vwap'].iloc[-1],
-            "TWAP": twap,
-            "TOC State": squeeze,
-            "AI Forecast": forecast,
-            "Success %": pop,
-            "News": news,
-            "Market Cap": nasdaq.get('MarketCap', {}).get('value', 'N/A')
-        }
-    except Exception as e:
-        return None
-
-# --- 2. THE UI: FIDELITY ELITE THEME ---
-
-st.set_page_config(page_title="Fidelity Elite Terminal", layout="wide")
+# --- 3. UI RENDER ---
+st.set_page_config(page_title="Fidelity Global Terminal", layout="wide")
 
 st.markdown("""
     <style>
     .stApp { background-color: #0d1217; color: #e1e4e8; }
     .stMetric { background-color: #161c23; border: 1px solid #30363d; padding: 15px; border-radius: 4px; }
-    .stDataFrame { border: 1px solid #30363d; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💹 Fidelity Elite Terminal | Multi-Source AI")
+st.title("💹 Fidelity Pro Terminal | Global Scale Intelligence")
 
-# AUTO-REFRESH FRAGMENT
+# AUTO-REFRESH WRAPPER
 @st.fragment(run_every=65)
-def render_terminal(ticker_list):
-    st.write(f"🕒 **Last Terminal Sync:** {datetime.now().strftime('%H:%M:%S')}")
+def terminal_fragment(universe):
+    st.write(f"🕒 **Last System Sync:** {datetime.now().strftime('%H:%M:%S')}")
     
-    results = []
-    # Using Threads to speed up multi-source calls
-    for t in ticker_list:
-        res = get_medallion_metrics(t)
-        if res: results.append(res)
-        time.sleep(0.5) # Anti-ban throttle
-    
-    if results:
-        df_final = pd.DataFrame(results)
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Assets Analyzed", len(df_final))
-        c2.metric("Squeeze Alerts", len(df_final[df_final['TOC State'] == "🔒 SQUEEZE"]))
-        c3.metric("Avg Success Rate", f"{df_final['Success %'].mean():.1f}%")
+    if st.button(f"🚀 RUN ANALYSIS ON {len(universe)} ASSETS"):
+        with st.spinner("Processing Global Market Matrix..."):
+            df = run_global_analysis(universe)
+            
+            if not df.empty:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Assets Analyzed", len(df))
+                c2.metric("TOC Squeeze Alerts", len(df[df['TOC'] == "🔒 SQUEEZE"]))
+                c3.metric("Avg Success %", f"{df['Success %'].mean():.1f}%")
 
-        st.subheader("📊 Fidelity Pro Scanner")
-        st.dataframe(
-            df_final[['Ticker', 'Price', 'VWAP', 'TWAP', 'TOC State', 'AI Forecast', 'Success %', 'Market Cap']]
-            .style.background_gradient(subset=['Success %'], cmap='RdYlGn')
-            .format({"Price": "${:.2f}", "VWAP": "${:.2f}", "TWAP": "${:.2f}", "AI Forecast": "${:.2f}", "Success %": "{:.1f}%"}),
-            use_container_width=True, hide_index=True
-        )
+                st.subheader("📊 Elite Algorithm Scanner")
+                st.dataframe(
+                    df.style.background_gradient(subset=['Success %'], cmap='RdYlGn')
+                    .format({"Price": "${:.2f}", "VWAP": "${:.2f}", "ML Target": "${:.2f}", "Success %": "{:.1f}%"}),
+                    use_container_width=True, hide_index=True, height=600
+                )
+            else:
+                st.error("Connection Interrupted. Try reducing ticker count or check API status.")
 
-        st.subheader("📰 Market Intelligence News (FinViz)")
-        for _, row in df_final.iterrows():
-            with st.expander(f"Top Headlines: {row['Ticker']}"):
-                for h in row['News']:
-                    st.write(f"• {h}")
-
-# --- 3. MAIN INTERFACE ---
+# SIDEBAR
 with st.sidebar:
-    st.header("Watchlist Management")
-    # Defaulting to a spread of US and Brazil stocks
-    tickers = st.text_area("Symbols (Comma Separated)", "AAPL, TSLA, NVDA, PETR4.SA, VALE3.SA, SPY, QQQ", height=150)
-    ticker_list = [x.strip() for x in tickers.split(',') if x.strip()]
-    st.divider()
-    st.info("Terminal updates every 65 seconds.")
+    st.header("Terminal Control")
+    st.info("System set to 'Global Universe' (300+ Stocks).")
+    universe = get_global_universe()
+    st.write(f"Active Tickers: {len(universe)}")
 
-render_terminal(ticker_list)
+terminal_fragment(universe)
