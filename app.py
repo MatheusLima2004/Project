@@ -4,53 +4,42 @@ import pandas as pd
 import numpy as np
 import math
 import time
+import random
 from datetime import datetime
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="ProTrader AI Terminal",
-    page_icon="🌙",
+    page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom "Fidelity-Dark" CSS
+# Custom CSS
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
     .stMetric { background-color: #1e2127; border: 1px solid #333; padding: 15px; border-radius: 8px; }
     .stDataFrame { border: 1px solid #333; }
     div[data-testid="stExpander"] { background-color: #1e2127; border-radius: 8px; }
-    a { color: #4DA6FF; text-decoration: none; }
-    a:hover { text-decoration: underline; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌙 ProTrader AI Terminal | Extended Hours Edition")
+st.title("📡 ProTrader AI Terminal | Multi-Source Data Engine")
 
 # --- 2. MATH & AI ENGINE ---
-
 def generate_market_resume(df):
-    if df.empty: return "Waiting for data..."
-    
+    if df.empty: return "Initializing..."
     spy = df[df['Ticker'] == 'SPY']
     if not spy.empty:
-        spy_change = spy['Change %'].values[0]
-        if spy_change > 0.5: sentiment = "BULLISH 🐂"
-        elif spy_change < -0.5: sentiment = "BEARISH 🐻"
-        else: sentiment = "NEUTRAL ⚖️"
+        change = spy['Change %'].values[0]
+        sentiment = "BULLISH 🐂" if change > 0 else "BEARISH 🐻"
     else:
-        sentiment = "UNKNOWN"
-        spy_change = 0
-
-    top_gainer = df.sort_values(by="Change %", ascending=False).iloc[0]
+        sentiment = "NEUTRAL ⚖️"
+        change = 0.0
     
-    summary = f"""
-    ### 📝 Market Status: {sentiment} ({spy_change:+.2f}%)
-    * **Top Performer:** **{top_gainer['Ticker']}** ({top_gainer['Change %']:+.2f}%)
-    * **Data Mode:** Extended Hours (Pre-Market/After-Hours) enabled.
-    """
-    return summary
+    top = df.sort_values(by="Change %", ascending=False).iloc[0]
+    return f"### 📝 Market Status: {sentiment} ({change:+.2f}%)\n* **Leader:** {top['Ticker']} ({top['Change %']:+.2f}%)"
 
 def calculate_rsi(series, period=14):
     if len(series) < period: return 50
@@ -74,207 +63,142 @@ def detect_stealth_algo(df):
         curr_vol = recent['Volume'].mean()
         price_change = abs(recent['Close'].pct_change().mean()) * 100
         
-        if curr_vol > (avg_vol * 1.5) and price_change < 0.1: return "🧊 ICEBERG (Accumulation)"
-        elif curr_vol > (avg_vol * 2.0) and price_change > 1.5: return "🌊 MOMENTUM SURGE"
+        if curr_vol > (avg_vol * 1.5) and price_change < 0.1: return "🧊 ICEBERG"
+        elif curr_vol > (avg_vol * 2.0) and price_change > 1.5: return "🌊 SURGE"
         else: return "---"
     except: return "---"
 
 def ai_analyst(row):
     rsi = row['RSI']
-    price = row['Price']
-    vwap = row['VWAP']
     algo = row['Algo Signal']
-    
-    if algo == "🧊 ICEBERG (Accumulation)" and rsi < 50: return "🔥 STRONG BUY: Whale detected."
-    if rsi < 30 and price < vwap: return "✅ BUY THE DIP: Oversold."
-    if rsi > 60 and price > vwap and algo == "🌊 MOMENTUM SURGE": return "🚀 RIDE TREND: Breakout."
-    if rsi > 75: return "⚠️ SELL/TRIM: Overbought."
-    return "😴 HOLD/WAIT"
+    if "ICEBERG" in algo and rsi < 50: return "🔥 STRONG BUY: Whale"
+    if rsi < 30: return "✅ BUY DIP: Oversold"
+    if rsi > 70: return "⚠️ SELL: Overbought"
+    return "😴 HOLD"
 
-def calculate_graham_value(eps, book_value):
-    try:
-        if eps is not None and book_value is not None and eps > 0 and book_value > 0:
-            return math.sqrt(22.5 * eps * book_value)
-    except: pass
-    return 0
+# --- 3. ROBUST DATA ENGINE ---
+def get_fallback_data(tickers):
+    """Generates realistic placeholder data if API fails completely."""
+    data = []
+    for t in tickers:
+        price = 150.0 + random.uniform(-5, 5)
+        change = random.uniform(-2, 2)
+        data.append({
+            "Ticker": t, "Price": price, "Change %": change,
+            "RSI": 50 + change * 5, "VWAP": price * 0.99,
+            "Algo Signal": "---", "Target Price": price * 1.1,
+            "Upside %": 10.0, "Fair Value": price * 0.8,
+            "Headline": "Data Unavailable (Offline Mode)",
+            "Link": "#", "Publisher": "System", "🤖 AI Tip": "⚠️ OFFLINE"
+        })
+    return pd.DataFrame(data)
 
-# --- 3. SIDEBAR ---
-with st.sidebar:
-    st.header("⚙️ Control Panel")
-    live_mode = st.toggle("🔴 LIVE MODE (Auto-Refresh)", value=False)
-    if live_mode: st.caption("Refreshing every 60s...")
-    st.divider()
-    
-    default_tickers = "NVDA, TSLA, AAPL, AMD, MSFT, AMZN, GOOGL, META, PLTR, SPY, QQQ, IWM"
-    ticker_input = st.text_area("Watchlist", default_tickers, height=150)
-    stock_list = [t.strip() for t in ticker_input.replace('\n', ',').split(',') if t.strip()]
-    st.divider()
-    rf_rate = st.number_input("Risk Free Rate (%)", value=4.5) / 100
-
-# --- 4. DATA ENGINE (EXTENDED HOURS) ---
-@st.cache_data(ttl=60 if live_mode else 3600)
+@st.cache_data(ttl=60)
 def fetch_market_data(stocks):
     data_points = []
+    failed_tickers = 0
     
     for ticker in stocks:
         try:
+            # 1. LIVE FETCH (Yahoo)
             stock = yf.Ticker(ticker)
+            # Fetch minimal data to minimize blocking risk
+            hist = stock.history(period="5d", interval="1d")
             
-            # 1. Get History (Enable prepost=True for After Hours)
-            # We fetch 5 days to ensure we have data even after a weekend
-            hist = stock.history(period="5d", interval="1d", prepost=True)
-            
-            # Fallback: If "1d" fails, try "1mo"
             if hist.empty:
-                hist = stock.history(period="1mo", interval="1d", prepost=True)
-            
-            if hist.empty: 
-                # Last resort: Try getting current price from info
-                # This prevents "No Data" message
-                info = stock.info
-                curr_price = info.get('currentPrice', info.get('previousClose', 0))
-                if curr_price == 0: continue # Skip if truly dead
-                
-                # Fake a history row for the rest of the code
-                pct_change = 0
-                rsi = 50
-            else:
-                curr_price = hist['Close'].iloc[-1]
-                prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else curr_price
-                pct_change = ((curr_price - prev_close) / prev_close) * 100
-                rsi = calculate_rsi(hist['Close']).iloc[-1]
+                raise ValueError("Empty Data")
 
-            # 2. Intraday for Algorithms
-            intraday = stock.history(period="5d", interval="60m", prepost=True)
-            vwap = calculate_vwap(intraday).iloc[-1] if not intraday.empty else curr_price
-            algo_signal = detect_stealth_algo(intraday) if not intraday.empty else "---"
+            # 2. CALCULATIONS
+            curr = hist['Close'].iloc[-1]
+            prev = hist['Close'].iloc[-2] if len(hist) > 1 else curr
+            change = ((curr - prev) / prev) * 100
+            rsi = calculate_rsi(hist['Close']).iloc[-1]
             
-            # 3. Fundamentals
+            # Simple Fundamental Check (failsafe)
             try:
                 info = stock.info
-                target_price = info.get('targetMeanPrice', 0)
-                if target_price and target_price > 0: upside = ((target_price - curr_price) / curr_price) * 100
-                else: upside = 0
-                fair_val = calculate_graham_value(info.get('trailingEps', 0), info.get('bookValue', 0))
-                
-                news_items = info.get('news', [])
-                top_news = news_items[0] if news_items else {}
-                headline = top_news.get('title', 'No recent news')
-                link = top_news.get('link', '#')
-                publisher = top_news.get('publisher', 'Unknown')
+                tgt = info.get('targetMeanPrice', 0)
+                news = info.get('news', [{}])[0]
             except:
-                upside = 0
-                fair_val = 0
-                headline = "News Unavailable"
-                link = "#"
-                publisher = "N/A"
-            
-            row_data = {
+                tgt = 0
+                news = {}
+
+            row = {
                 "Ticker": ticker,
-                "Price": curr_price,
-                "Change %": pct_change,
+                "Price": curr,
+                "Change %": change,
                 "RSI": rsi,
-                "VWAP": vwap,
-                "Algo Signal": algo_signal,
-                "Target Price": target_price,
-                "Upside %": upside,
-                "Fair Value": fair_val,
-                "Headline": headline,
-                "Link": link,
-                "Publisher": publisher
+                "VWAP": curr, # Simplified for robustness
+                "Algo Signal": "---", # Needs intraday, skipping for speed
+                "Target Price": tgt,
+                "Upside %": ((tgt - curr)/curr)*100 if tgt else 0,
+                "Fair Value": 0, # Skipped to save API calls
+                "Headline": news.get('title', 'No News'),
+                "Link": news.get('link', '#'),
+                "Publisher": news.get('publisher', 'N/A')
             }
-            row_data["🤖 AI Tip"] = ai_analyst(row_data)
-            data_points.append(row_data)
+            row["🤖 AI Tip"] = ai_analyst(row)
+            data_points.append(row)
             
-            time.sleep(0.1)
+            time.sleep(0.2) # Throttling
             
         except Exception:
+            failed_tickers += 1
             continue
-            
+    
+    # If ALL failed, return Fallback
+    if failed_tickers == len(stocks):
+        return pd.DataFrame() # Trigger fallback in main loop
+        
     return pd.DataFrame(data_points)
 
-# --- 5. RENDER DASHBOARD ---
+# --- 4. DASHBOARD RENDER ---
+sidebar = st.sidebar
+sidebar.header("⚙️ Control Panel")
+live_mode = sidebar.toggle("🔴 LIVE MODE", value=True)
+stock_list = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "AMZN", "SPY", "QQQ"]
+
 placeholder = st.empty()
 
 while True:
     with placeholder.container():
+        # ATTEMPT FETCH
         df = fetch_market_data(stock_list)
         
+        # FALLBACK LOGIC
         if df.empty:
-            st.warning("⚠️ No data loaded. Check internet connection or Yahoo API status.")
-            if st.button("🔄 Retry"): st.cache_data.clear()
+            st.warning("⚠️ Yahoo API Blocked/Down. Switched to OFFLINE MODE.")
+            df = get_fallback_data(stock_list) # Use backup generator
+        
+        # RESUME
+        st.info(generate_market_resume(df))
+        
+        # METRICS
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📅 Date", datetime.now().strftime("%Y-%m-%d"))
+        
+        spy_row = df[df['Ticker'] == 'SPY']
+        if not spy_row.empty:
+            c2.metric("SPY", f"${spy_row['Price'].values[0]:.2f}", f"{spy_row['Change %'].values[0]:.2f}%")
         else:
-            # RESUME
-            st.info(generate_market_resume(df))
+            c2.metric("Status", "Online")
+
+        # TABS
+        tab_tv, tab_main = st.tabs(["📺 Live Bloomberg TV", "🚀 AI Scanner"])
+        
+        with tab_tv:
+            st.video("https://www.youtube.com/watch?v=dp8PhLsUcFE")
             
-            # METRICS
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("📅 Date", datetime.now().strftime("%Y-%m-%d"))
-            c2.metric("🕒 Time", datetime.now().strftime("%H:%M:%S"))
-            c3.metric("🦅 Risk Free Rate", f"{rf_rate*100:.2f}%")
-            
-            market_proxy = df[df['Ticker'] == 'SPY']
-            if not market_proxy.empty:
-                spy_price = market_proxy['Price'].values[0]
-                spy_change = market_proxy['Change %'].values[0]
-                c4.metric("🇺🇸 SPY Market", f"${spy_price:.2f}", f"{spy_change:.2f}%")
-            else:
-                c4.metric("Active Assets", len(df))
+        with tab_main:
+            st.dataframe(
+                df.style.background_gradient(subset=['Change %'], cmap='RdYlGn', vmin=-3, vmax=3)
+                .format({"Price": "${:.2f}", "Change %": "{:+.2f}%", "RSI": "{:.0f}"}),
+                column_config={
+                    "Link": st.column_config.LinkColumn("News"),
+                    "🤖 AI Tip": st.column_config.TextColumn("AI Signal")
+                },
+                use_container_width=True, hide_index=True
+            )
 
-            # TABS
-            tab_tv, tab_main, tab_edu = st.tabs(["📺 Live TV & News", "🚀 AI Scanner", "📘 Education"])
-
-            with tab_tv:
-                col_video, col_news = st.columns([2, 1])
-                with col_video:
-                    st.subheader("🔴 Bloomberg Global Financial News (Live)")
-                    st.video("https://www.youtube.com/watch?v=dp8PhLsUcFE")
-                    st.caption("Stream provided via YouTube.")
-
-                with col_news:
-                    st.subheader("📰 Breaking Headlines")
-                    st.markdown("---")
-                    for i, row in df.iterrows():
-                        with st.container():
-                            st.markdown(f"**{row['Ticker']}**")
-                            st.markdown(f"[{row['Headline']}]({row['Link']})")
-                            st.caption(f"Source: {row['Publisher']}")
-                            st.divider()
-
-            with tab_main:
-                st.subheader("🤖 Artificial Intelligence Insights")
-                st.dataframe(
-                    df.style.background_gradient(subset=['Upside %'], cmap='RdYlGn', vmin=-10, vmax=30)
-                    .format({
-                        "Price": "${:.2f}", 
-                        "Change %": "{:+.2f}%", 
-                        "RSI": "{:.0f}", 
-                        "VWAP": "${:.2f}", 
-                        "Target Price": "${:.2f}", 
-                        "Upside %": "{:+.1f}%",
-                        "Fair Value": "${:.2f}"
-                    }),
-                    column_config={
-                        "Algo Signal": st.column_config.TextColumn("Inst. Footprint"),
-                        "🤖 AI Tip": st.column_config.TextColumn("AI Action Plan", width="medium"),
-                        "Headline": st.column_config.TextColumn("Top Story", width="large"),
-                        "Link": st.column_config.LinkColumn("Read")
-                    },
-                    use_container_width=True, hide_index=True, height=600
-                )
-
-            with tab_edu:
-                st.header("📘 Options Trading Academy")
-                col1, col2 = st.columns(2)
-                with col1:
-                    with st.expander("🟢 The Basics: Calls vs. Puts", expanded=True):
-                        st.write("**Call:** You think price goes UP.")
-                        st.write("**Put:** You think price goes DOWN.")
-                with col2:
-                    with st.expander("📐 The 'Greeks'", expanded=True):
-                        st.write("**Delta:** Sensitivity to Price.")
-                        st.write("**Theta:** Sensitivity to Time (Decay).")
-
-    if not live_mode:
-        break
+    if not live_mode: break
     time.sleep(60)
