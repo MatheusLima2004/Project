@@ -5,9 +5,11 @@ import numpy as np
 import scipy.stats as si
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
+import requests
+from bs4 import BeautifulSoup
 import time
 
-# --- 1. SOVEREIGN THEME ---
+# --- 1. SOVEREIGN THEME & MULTI-SOURCE CONFIG ---
 st.set_page_config(page_title="Medallion Sovereign Terminal", layout="wide")
 
 st.markdown("""
@@ -18,25 +20,37 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. THE SOVEREIGN ENGINE (ML & OPTIONS) ---
+# --- 2. DECENTRALIZED DATA TOOLS ---
 
-def run_sovereign_logic(df, ticker):
+def get_marketwatch_sentiment(ticker):
+    """Pulls news from MarketWatch to offload Yahoo traffic"""
     try:
-        if df is None or len(df) < 60: return None
+        url = f"https://www.marketwatch.com/investing/stock/{ticker.split('.')[0]}/morenews"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        resp = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(resp.content, 'html.parser')
+        headlines = [h.text.strip() for h in soup.find_all('h3', class_='article__headline')[:2]]
+        return headlines if headlines else ["MarketWatch: No recent headlines."]
+    except: return ["News Source: MarketWatch Offline."]
+
+def run_medallion_math(df, ticker):
+    """Wall Street Algorithms: Z-Score, Kelly, TOC Squeeze, and ML"""
+    try:
+        if df.empty or len(df) < 60: return None
         
-        # Z-Score (Statistical Mean Reversion)
-        ma_60 = df['Close'].rolling(60).mean()
-        std_60 = df['Close'].rolling(60).std()
+        # Z-Score Mean Reversion
+        ma = df['Close'].rolling(60).mean()
+        std = df['Close'].rolling(60).std()
         curr = df['Close'].iloc[-1]
-        z_score = (curr - ma_60.iloc[-1]) / std_60.iloc[-1]
+        z_score = (curr - ma.iloc[-1]) / std.iloc[-1]
         
-        # Kelly Criterion (Sizing)
+        # Kelly Criterion
         rets = df['Close'].pct_change().dropna()
         win_rate = len(rets[rets > 0]) / len(rets)
         win_loss = rets[rets > 0].mean() / abs(rets[rets < 0].mean()) if not rets[rets < 0].empty else 1
         kelly = (win_rate * (win_loss + 1) - 1) / win_loss
         
-        # ML Price Forecast (Next 30 Trading Days)
+        # ML Trend Forecast
         y = df['Close'].tail(90).values
         x = np.arange(len(y)).reshape(-1, 1)
         model = LinearRegression().fit(x, y)
@@ -48,68 +62,56 @@ def run_sovereign_logic(df, ticker):
         d2 = (np.log(curr / forecast) + (0.045 - 0.5 * sigma**2) * days_to_expiry) / (sigma * np.sqrt(days_to_expiry))
         pop = si.norm.cdf(abs(d2)) * 100
         
-        # TOC Squeeze (TTM Logic)
+        # TOC Squeeze (Bollinger/Keltner Compression)
         atr = (df['High'] - df['Low']).rolling(20).mean().iloc[-1]
-        squeeze = "🔒 SQUEEZE" if (2 * std_60.iloc[-1] < 1.5 * atr) else "🌊 EXPANSION"
+        squeeze = "🔒 SQUEEZE" if (2 * std.iloc[-1] < 1.5 * atr) else "🌊 EXPANSION"
 
         return {
             "Symbol": ticker, "Price": curr, "Z-Score": z_score, 
             "Kelly %": max(0, kelly * 100), "TOC State": squeeze, 
-            "ML Target": forecast, "PoP %": pop, "Volatility": sigma
+            "ML Target": forecast, "PoP %": pop
         }
     except: return None
 
-# --- 3. THE 15-MINUTE DEEP SCAN FRAGMENT ---
+# --- 3. 15-MINUTE DEEP SCAN FRAGMENT ---
 
 @st.fragment(run_every=900)
 def sovereign_render(ticker_list):
-    st.markdown("<h2 style='color:#58a6ff;'>Sovereign Medallion Command</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#58a6ff;'>Sovereign Medallion Command | Decentralized Edition</h2>", unsafe_allow_html=True)
     
     col_stat1, col_stat2, col_stat3 = st.columns(3)
-    col_stat1.metric("Cycle Interval", "15:00 MIN", "MAX DEEP SCAN")
-    col_stat2.metric("Sync Status", "PROTECTED", f"SYNC: {datetime.now().strftime('%H:%M:%S')}")
+    col_stat1.metric("Cycle Interval", "15:00 MIN", "MULTI-SOURCE SYNC")
+    col_stat2.metric("Shield Status", "DECENTRALIZED", "ACTIVE")
     col_stat3.metric("Assets Analyzed", len(ticker_list))
 
-    with st.spinner("Executing Staggered Multi-Source Intelligence..."):
-        # We download in a staggered way to prevent "Connection Interrupted"
-        results, news_feed = [], []
+    with st.spinner("Spreading Data Calls Across Global Exchanges..."):
+        # Batching historic data (Yahoo) while news is offloaded (MarketWatch)
+        df_mega = yf.download(ticker_list, period="2y", interval="1d", group_by='ticker', threads=True, progress=False)
         
-        # Split tickers into small batches to avoid Yahoo rate-limiting
-        batch_size = 15
-        for i in range(0, len(ticker_list), batch_size):
-            batch = ticker_list[i:i + batch_size]
-            df_batch = yf.download(batch, period="2y", interval="1d", group_by='ticker', threads=True, progress=False)
-            
-            for t in batch:
-                res = run_sovereign_logic(df_batch[t], t)
-                if res: 
-                    results.append(res)
-                    try:
-                        n = yf.Ticker(t).news[:1]
-                        for item in n: news_feed.append({"symbol": t, "title": item['title'], "link": item['link']})
-                    except: pass
-            
-            # Short rest between batches to "humanize" the traffic
-            time.sleep(2)
+        results, news_feed = [], []
+        for t in ticker_list:
+            res = run_medallion_math(df_mega[t], t)
+            if res: 
+                results.append(res)
+                # News from MarketWatch instead of Yahoo news API
+                news_headlines = get_marketwatch_sentiment(t)
+                for h in news_headlines:
+                    news_feed.append({"symbol": t, "title": h})
 
     col_main, col_news = st.columns([3, 1])
     
     with col_main:
         if results:
             df_res = pd.DataFrame(results)
-            styled_df = df_res.style.background_gradient(subset=['PoP %'], cmap='RdYlGn')
-            
             st.dataframe(
-                styled_df.format({
-                    "Price": "${:.2f}", "Z-Score": "{:.2f}", "Kelly %": "{:.1f}%", 
-                    "ML Target": "${:.2f}", "PoP %": "{:.1f}%", "Volatility": "{:.1%}"
-                }),
+                df_res.style.background_gradient(subset=['PoP %'], cmap='RdYlGn')
+                .format({"Price": "${:.2f}", "Z-Score": "{:.2f}", "Kelly %": "{:.1f}%", "ML Target": "${:.2f}", "PoP %": "{:.1f}%"}),
                 use_container_width=True, hide_index=True, height=500
             )
         else:
-            st.error("Connection Blocked by Exchange. Yahoo has limited this IP. Waiting for next cycle...")
+            st.error("Protocol Failure: Multi-source validation failed. Check Ticker List.")
         
-        # Real-time Chart
+        # Live Chart Feed
         st.components.v1.html(f"""
             <div id="tv-chart" style="height:450px;"></div>
             <script src="https://s3.tradingview.com/tv.js"></script>
@@ -119,15 +121,15 @@ def sovereign_render(ticker_list):
         """, height=450)
 
     with col_news:
-        st.subheader("📰 Watchlist Intel")
+        st.subheader("📰 MarketWatch Feed")
         for news in news_feed:
-            st.markdown(f"""<div class='news-card'><b>{news['symbol']}</b>: <a href='{news['link']}' target='_blank' style='color:white;text-decoration:none;'>{news['title']}</a></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class='news-card'><b>{news['symbol']}</b>: {news['title']}</div>""", unsafe_allow_html=True)
 
 # --- 4. SIDEBAR ---
 with st.sidebar:
-    st.header("Asset Universe")
+    st.header("Global Asset Universe")
     default_list = "AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL, META, NFLX, AMD, PLTR, VALE3.SA, PETR4.SA, ITUB4.SA, SPY, QQQ"
-    raw_tickers = st.text_area("Ticker List", default_list, height=300)
+    raw_tickers = st.text_area("Ticker Universe (Comma Separated)", default_list, height=300)
     ticker_list = [x.strip() for x in raw_tickers.split(',') if x.strip()]
 
 sovereign_render(ticker_list)
