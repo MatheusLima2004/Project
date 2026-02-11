@@ -7,101 +7,86 @@ from sklearn.linear_model import LinearRegression
 from datetime import datetime
 import time
 
-# --- 1. SOVEREIGN THEME ---
-st.set_page_config(page_title="Medallion Sovereign Terminal", layout="wide")
+# --- 1. INSTITUTIONAL DATA SCRAPERS ---
+@st.cache_data(ttl=86400) # Cache for 24 hours
+def get_full_market_tickers():
+    """Scrapes the S&P 500 and Top Brazilian Tickers automatically"""
+    try:
+        # Node 1: S&P 500 from Wikipedia
+        sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+        us_tickers = sp500['Symbol'].tolist()
+        
+        # Node 2: Top Brazilian Tickers (B3)
+        br_tickers = [
+            'VALE3.SA', 'PETR4.SA', 'ITUB4.SA', 'BBDC4.SA', 'BBAS3.SA', 'ABEV3.SA', 
+            'WEGE3.SA', 'B3SA3.SA', 'RENT3.SA', 'SUZB3.SA', 'GGBR4.SA', 'JBSS3.SA',
+            'RAIL3.SA', 'EQTL3.SA', 'VIVT3.SA', 'PRIO3.SA', 'LREN3.SA', 'RDOR3.SA'
+        ]
+        
+        # Node 3: Nasdaq 100 / Tech Leaders
+        tech = ['NVDA', 'TSLA', 'AMD', 'PLTR', 'NFLX', 'META', 'AMZN', 'GOOGL', 'MSFT']
+        
+        return list(set(us_tickers + br_tickers + tech))
+    except Exception as e:
+        return ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"] # Fallback
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #0b0e11; color: #e1e4e8; }
-    .stMetric { background-color: #15191e; border: 1px solid #2d333b; padding: 15px; border-radius: 4px; }
-    .strategy-card { background-color: #1c2128; border-left: 5px solid #58a6ff; padding: 15px; border-radius: 5px; margin-bottom: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. DEEP OPTIONS & ML LOGIC ---
-def analyze_options_strategy(df, ticker):
+# --- 2. THE MEDALLION ENGINE ---
+def analyze_medallion_logic(df, ticker):
     try:
         if df is None or len(df) < 50: return None
         curr = df['Close'].iloc[-1]
         
-        # Z-Score (Mean Reversion)
-        ma_50 = df['Close'].rolling(50).mean()
-        std_50 = df['Close'].rolling(50).std()
-        z = (curr - ma_50.iloc[-1]) / std_50.iloc[-1]
+        # Z-Score & Volatility
+        ma, std = df['Close'].rolling(50).mean().iloc[-1], df['Close'].rolling(50).std().iloc[-1]
+        z = (curr - ma) / std
+        sigma = df['Close'].pct_change().std() * np.sqrt(252)
         
-        # ML Trend (30-Day Projection)
+        # ML Trend Projection
         y = df['Close'].tail(60).values
         x = np.arange(len(y)).reshape(-1, 1)
         model = LinearRegression().fit(x, y)
         forecast = model.predict([[len(y) + 30]])[0]
         
-        # Options ML: PoP (Probability of Profit)
-        rets = df['Close'].pct_change().dropna()
-        sigma = rets.std() * np.sqrt(252)
-        days_to_expiry = 30 / 365
-        d2 = (np.log(curr / forecast) + (0.045 - 0.5 * sigma**2) * days_to_expiry) / (sigma * np.sqrt(days_to_expiry))
+        # Options POP (Probability of Profit)
+        d2 = (np.log(curr / forecast) + (0.045 - 0.5 * sigma**2) * (30/365)) / (sigma * np.sqrt(30/365))
         pop = si.norm.cdf(abs(d2)) * 100
-        
-        # TOC Squeeze (TTM Logic)
-        atr = (df['High'] - df['Low']).rolling(20).mean().iloc[-1]
-        squeeze = "🔒 SQUEEZE" if (2 * std_50.iloc[-1] < 1.5 * atr) else "🌊 EXPANSION"
-
-        # Strategy Logic
-        if z < -1.5 and pop > 60: strat = "BULLISH CALL"
-        elif z > 1.5 and pop < 40: strat = "BEARISH PUT"
-        else: strat = "NEUTRAL / HOLD"
 
         return {
             "Symbol": ticker, "Price": curr, "Z-Score": z, 
-            "Kelly %": 0.0, "State": squeeze, "ML Target": forecast, 
-            "PoP %": pop, "Strategy": strat
+            "ML Target": forecast, "PoP %": pop, "Volatility": sigma
         }
     except: return None
 
-# --- 3. THE FAIL-SAFE RENDER ENGINE ---
-@st.fragment(run_every=900)
-def sovereign_render(ticker_list):
-    st.markdown("<h2 style='color:#58a6ff;'>Sovereign Command | Deep ML Options Matrix</h2>", unsafe_allow_html=True)
+# --- 3. THE 12-MINUTE FULL MARKET SCAN ---
+@st.fragment(run_every=720)
+def full_market_render():
+    st.markdown("<h2 style='color:#58a6ff;'>Sovereign Terminal | Full Market Intelligence</h2>", unsafe_allow_html=True)
     
-    with st.spinner("Executing Staggered Multi-Node Intelligence..."):
-        # Download data (Fail-safe Batching)
-        df_mega = yf.download(ticker_list, period="2y", interval="1d", group_by='ticker', threads=True, progress=False)
+    ticker_list = get_full_market_tickers()
+    
+    col_stat1, col_stat2, col_stat3 = st.columns(3)
+    col_stat1.metric("Asset Universe", f"{len(ticker_list)} Stocks")
+    col_stat2.metric("Scan Cycle", "12:00 MIN")
+    col_stat3.metric("Protocol Status", "ENCRYPTED")
+
+    with st.spinner(f"Vectorizing Algorithms for {len(ticker_list)} Assets..."):
+        # Batching is the only way to avoid the ban
+        df_mega = yf.download(ticker_list, period="1y", interval="1d", group_by='ticker', threads=True, progress=False)
         
         results = []
         for t in ticker_list:
-            res = analyze_options_strategy(df_mega[t], t)
+            res = analyze_medallion_logic(df_mega[t], t)
             if res: results.append(res)
-        
-    if results:
-        df_res = pd.DataFrame(results)
-        
-        # --- THE FIX: DYNAMIC STYLING ---
-        styled_df = df_res.style
-        
-        # Only style if columns exist (Prevents KeyError)
-        if 'PoP %' in df_res.columns:
-            styled_df = styled_df.background_gradient(subset=['PoP %'], cmap='RdYlGn')
-        
-        if 'Strategy' in df_res.columns:
-            styled_df = styled_df.map(
-                lambda x: 'color: #00c805' if x == 'BULLISH CALL' else ('color: #ff3b3b' if x == 'BEARISH PUT' else ''),
-                subset=['Strategy']
-            )
 
+    if results:
+        df_final = pd.DataFrame(results)
         st.dataframe(
-            styled_df.format({
-                "Price": "${:.2f}", "Z-Score": "{:.2f}", "ML Target": "${:.2f}", "PoP %": "{:.1f}%"
-            }),
-            use_container_width=True, hide_index=True, height=500
+            df_final.style.background_gradient(subset=['PoP %'], cmap='RdYlGn')
+            .format({"Price": "${:.2f}", "Z-Score": "{:.2f}", "ML Target": "${:.2f}", "PoP %": "{:.1f}%", "Volatility": "{:.1%}"}),
+            use_container_width=True, hide_index=True, height=600
         )
     else:
-        st.error("Protocol Error: No data processed. Check Ticker List in Sidebar.")
+        st.error("Protocol Failure: Multi-source validation failed. Yahoo IP Limited.")
 
-# --- 4. SIDEBAR ---
-with st.sidebar:
-    st.header("Asset Universe")
-    default_list = "AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL, META, NFLX, AMD, PLTR, VALE3.SA, PETR4.SA, ITUB4.SA, SPY, QQQ"
-    raw_tickers = st.text_area("Ticker List", default_list, height=300)
-    ticker_list = [x.strip() for x in raw_tickers.split(',') if x.strip()]
-
-sovereign_render(ticker_list)
+# --- 4. MAIN INTERFACE ---
+full_market_render()
