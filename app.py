@@ -7,86 +7,116 @@ from sklearn.linear_model import LinearRegression
 from datetime import datetime
 import time
 
-# --- 1. INSTITUTIONAL DATA SCRAPERS ---
-@st.cache_data(ttl=86400) # Cache for 24 hours
-def get_full_market_tickers():
-    """Scrapes the S&P 500 and Top Brazilian Tickers automatically"""
-    try:
-        # Node 1: S&P 500 from Wikipedia
-        sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-        us_tickers = sp500['Symbol'].tolist()
-        
-        # Node 2: Top Brazilian Tickers (B3)
-        br_tickers = [
-            'VALE3.SA', 'PETR4.SA', 'ITUB4.SA', 'BBDC4.SA', 'BBAS3.SA', 'ABEV3.SA', 
-            'WEGE3.SA', 'B3SA3.SA', 'RENT3.SA', 'SUZB3.SA', 'GGBR4.SA', 'JBSS3.SA',
-            'RAIL3.SA', 'EQTL3.SA', 'VIVT3.SA', 'PRIO3.SA', 'LREN3.SA', 'RDOR3.SA'
-        ]
-        
-        # Node 3: Nasdaq 100 / Tech Leaders
-        tech = ['NVDA', 'TSLA', 'AMD', 'PLTR', 'NFLX', 'META', 'AMZN', 'GOOGL', 'MSFT']
-        
-        return list(set(us_tickers + br_tickers + tech))
-    except Exception as e:
-        return ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"] # Fallback
+# --- 1. COMMAND CENTER STYLING ---
+st.set_page_config(page_title="Sovereign Elite Terminal", layout="wide", initial_sidebar_state="expanded")
 
-# --- 2. THE MEDALLION ENGINE ---
-def analyze_medallion_logic(df, ticker):
+st.markdown("""
+    <style>
+    .stApp { background-color: #0b0e11; color: #e1e4e8; }
+    [data-testid="stSidebar"] { background-color: #15191e; border-right: 1px solid #2d333b; }
+    .stMetric { background-color: #15191e; border: 1px solid #2d333b; padding: 15px; border-radius: 4px; }
+    .intel-card { background-color: #15191e; padding: 12px; border-radius: 4px; border-left: 4px solid #00c805; margin-bottom: 8px; font-size: 13px; }
+    .algo-label { color: #8b949e; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. DEEP-SCAN ALGORITHM ENGINE ---
+def analyze_sovereign_logic(df, ticker):
     try:
-        if df is None or len(df) < 50: return None
+        if df.empty or len(df) < 50: return None
         curr = df['Close'].iloc[-1]
         
-        # Z-Score & Volatility
-        ma, std = df['Close'].rolling(50).mean().iloc[-1], df['Close'].rolling(50).std().iloc[-1]
-        z = (curr - ma) / std
-        sigma = df['Close'].pct_change().std() * np.sqrt(252)
+        # 1. Z-Score (Mean Reversion)
+        ma_50 = df['Close'].rolling(50).mean()
+        std_50 = df['Close'].rolling(50).std()
+        z = (curr - ma_50.iloc[-1]) / std_50.iloc[-1]
         
-        # ML Trend Projection
+        # 2. Kelly Criterion (Sizing)
+        rets = df['Close'].pct_change().dropna()
+        win_rate = len(rets[rets > 0]) / len(rets)
+        win_loss = rets[rets > 0].mean() / abs(rets[rets < 0].mean()) if not rets[rets < 0].empty else 1
+        kelly = (win_rate * (win_loss + 1) - 1) / win_loss
+        
+        # 3. ML Trend & PoP (Options Intelligence)
         y = df['Close'].tail(60).values
         x = np.arange(len(y)).reshape(-1, 1)
         model = LinearRegression().fit(x, y)
-        forecast = model.predict([[len(y) + 30]])[0]
-        
-        # Options POP (Probability of Profit)
-        d2 = (np.log(curr / forecast) + (0.045 - 0.5 * sigma**2) * (30/365)) / (sigma * np.sqrt(30/365))
+        target = model.predict([[len(y) + 30]])[0]
+        sigma = rets.std() * np.sqrt(252)
+        d2 = (np.log(curr / target) + (0.045 - 0.5 * sigma**2) * (30/365)) / (sigma * np.sqrt(30/365))
         pop = si.norm.cdf(abs(d2)) * 100
 
         return {
             "Symbol": ticker, "Price": curr, "Z-Score": z, 
-            "ML Target": forecast, "PoP %": pop, "Volatility": sigma
+            "Kelly %": max(0, kelly * 100), "AI Target": target, "PoP %": pop
         }
     except: return None
 
-# --- 3. THE 12-MINUTE FULL MARKET SCAN ---
+# --- 3. 12-MINUTE SOVEREIGN FRAGMENT ---
 @st.fragment(run_every=720)
-def full_market_render():
-    st.markdown("<h2 style='color:#58a6ff;'>Sovereign Terminal | Full Market Intelligence</h2>", unsafe_allow_html=True)
+def render_command_center(ticker_list):
+    st.markdown("<h2 style='color:#58a6ff;'>Sovereign Command Center | Institutional Intelligence</h2>", unsafe_allow_html=True)
     
-    ticker_list = get_full_market_tickers()
-    
-    col_stat1, col_stat2, col_stat3 = st.columns(3)
-    col_stat1.metric("Asset Universe", f"{len(ticker_list)} Stocks")
-    col_stat2.metric("Scan Cycle", "12:00 MIN")
-    col_stat3.metric("Protocol Status", "ENCRYPTED")
+    # Global Pulse Metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Node Status", "DECENTRALIZED", delta="ACTIVE")
+    m2.metric("Scan Cycle", "12:00 MIN", delta="DEEP ML")
+    m3.metric("Assets Online", len(ticker_list))
+    m4.metric("Sync Time", datetime.now().strftime("%H:%M:%S"))
 
-    with st.spinner(f"Vectorizing Algorithms for {len(ticker_list)} Assets..."):
-        # Batching is the only way to avoid the ban
-        df_mega = yf.download(ticker_list, period="1y", interval="1d", group_by='ticker', threads=True, progress=False)
+    with st.spinner("Mining Multi-Node Data Mines..."):
+        # Batching for full-market throughput
+        df_mega = yf.download(ticker_list, period="2y", interval="1d", group_by='ticker', threads=True, progress=False)
         
-        results = []
+        results, intel_feed = [], []
         for t in ticker_list:
-            res = analyze_medallion_logic(df_mega[t], t)
-            if res: results.append(res)
+            res = analyze_sovereign_logic(df_mega[t], t)
+            if res: 
+                results.append(res)
+                try:
+                    # Offload intelligence to news node
+                    n = yf.Ticker(t).news[:1]
+                    for item in n: intel_feed.append({"s": t, "t": item['title'], "l": item['link']})
+                except: pass
 
-    if results:
-        df_final = pd.DataFrame(results)
+    # Platform Grid
+    col_main, col_intel = st.columns([3, 1])
+    
+    with col_main:
+        st.markdown("<p class='algo-label'>Global Intelligence Matrix</p>", unsafe_allow_html=True)
+        df_res = pd.DataFrame(results)
+        
+        # Fail-safe styling check
+        styled_df = df_res.style
+        if 'PoP %' in df_res.columns:
+            styled_df = styled_df.background_gradient(subset=['PoP %'], cmap='RdYlGn')
+        
         st.dataframe(
-            df_final.style.background_gradient(subset=['PoP %'], cmap='RdYlGn')
-            .format({"Price": "${:.2f}", "Z-Score": "{:.2f}", "ML Target": "${:.2f}", "PoP %": "{:.1f}%", "Volatility": "{:.1%}"}),
-            use_container_width=True, hide_index=True, height=600
+            styled_df.format({"Price": "${:.2f}", "Z-Score": "{:.2f}", "Kelly %": "{:.1f}%", "AI Target": "${:.2f}", "PoP %": "{:.1f}%"}),
+            use_container_width=True, hide_index=True, height=500
         )
-    else:
-        st.error("Protocol Failure: Multi-source validation failed. Yahoo IP Limited.")
+        
+        # Live Stream Module
+        st.markdown("<p class='algo-label'>Execution Stream</p>", unsafe_allow_html=True)
+        st.components.v1.html(f"""
+            <div id="tv-chart" style="height:400px;"></div>
+            <script src="https://s3.tradingview.com/tv.js"></script>
+            <script>
+            new TradingView.widget({{"width": "100%", "height": 400, "symbol": "{ticker_list[0]}", "interval": "D", "theme": "dark", "style": "1", "container_id": "tv-chart"}});
+            </script>
+        """, height=400)
 
-# --- 4. MAIN INTERFACE ---
-full_market_render()
+    with col_intel:
+        st.markdown("<p class='algo-label'>Institutional Intel Feed</p>", unsafe_allow_html=True)
+        for news in intel_feed[:15]:
+            st.markdown(f"""<div class='intel-card'><b>{news['s']}</b>: <a href='{news['l']}' target='_blank' style='color:white; text-decoration:none;'>{news['t']}</a></div>""", unsafe_allow_html=True)
+
+# --- 4. ASSET UNIVERSE INPUT ---
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/e/e3/Fidelity_Investments_logo.svg", width=120)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.header("Asset Universe")
+    default_list = "AAPL, MSFT, NVDA, TSLA, AMZN, META, GOOGL, NFLX, AMD, PLTR, VALE3.SA, PETR4.SA, ITUB4.SA, SPY, QQQ"
+    ticker_list = [x.strip() for x in st.text_area("Ticker List", default_list, height=300).split(',') if x.strip()]
+
+render_command_center(ticker_list)
