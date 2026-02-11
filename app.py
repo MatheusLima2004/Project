@@ -9,7 +9,7 @@ from datetime import datetime
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="ProTrader AI Terminal",
-    page_icon="📺",
+    page_icon="🌙",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -26,15 +26,13 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("📺 ProTrader AI Terminal | Live TV & Algo Scanner")
+st.title("🌙 ProTrader AI Terminal | Extended Hours Edition")
 
 # --- 2. MATH & AI ENGINE ---
 
 def generate_market_resume(df):
-    """Generates a text summary of the trading day based on data."""
     if df.empty: return "Waiting for data..."
     
-    # 1. Market Sentiment (Based on SPY)
     spy = df[df['Ticker'] == 'SPY']
     if not spy.empty:
         spy_change = spy['Change %'].values[0]
@@ -45,19 +43,12 @@ def generate_market_resume(df):
         sentiment = "UNKNOWN"
         spy_change = 0
 
-    # 2. Top Movers
     top_gainer = df.sort_values(by="Change %", ascending=False).iloc[0]
-    top_loser = df.sort_values(by="Change %", ascending=True).iloc[0]
-    
-    # 3. Sector Rotation (Using Tech vs Energy proxy if available)
-    # Simple logic: If Tech (QQQ) > Bonds (TLT), it's "Risk On"
     
     summary = f"""
-    ### 📝 Executive Market Resume
-    * **Market Mood:** The S&P 500 is **{sentiment}** today ({spy_change:+.2f}%).
-    * **Top Performer:** **{top_gainer['Ticker']}** is leading the pack, up **{top_gainer['Change %']:+.2f}%**.
-    * **Laggard:** **{top_loser['Ticker']}** is dragging, down **{top_loser['Change %']:+.2f}%**.
-    * **Institutional Action:** Algorithms are detecting **{len(df[df['Algo Signal'].str.contains('ICEBERG')])}** hidden accumulation zones (Icebergs) right now.
+    ### 📝 Market Status: {sentiment} ({spy_change:+.2f}%)
+    * **Top Performer:** **{top_gainer['Ticker']}** ({top_gainer['Change %']:+.2f}%)
+    * **Data Mode:** Extended Hours (Pre-Market/After-Hours) enabled.
     """
     return summary
 
@@ -120,33 +111,63 @@ with st.sidebar:
     st.divider()
     rf_rate = st.number_input("Risk Free Rate (%)", value=4.5) / 100
 
-# --- 4. DATA ENGINE ---
+# --- 4. DATA ENGINE (EXTENDED HOURS) ---
 @st.cache_data(ttl=60 if live_mode else 3600)
 def fetch_market_data(stocks):
     data_points = []
+    
     for ticker in stocks:
         try:
             stock = yf.Ticker(ticker)
-            hist = stock.history(period="1mo", interval="1d")
-            intraday = stock.history(period="5d", interval="60m")
-            if hist.empty: continue
             
-            curr_price = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else curr_price
-            pct_change = ((curr_price - prev_close) / prev_close) * 100
+            # 1. Get History (Enable prepost=True for After Hours)
+            # We fetch 5 days to ensure we have data even after a weekend
+            hist = stock.history(period="5d", interval="1d", prepost=True)
             
-            rsi = calculate_rsi(hist['Close']).iloc[-1]
+            # Fallback: If "1d" fails, try "1mo"
+            if hist.empty:
+                hist = stock.history(period="1mo", interval="1d", prepost=True)
+            
+            if hist.empty: 
+                # Last resort: Try getting current price from info
+                # This prevents "No Data" message
+                info = stock.info
+                curr_price = info.get('currentPrice', info.get('previousClose', 0))
+                if curr_price == 0: continue # Skip if truly dead
+                
+                # Fake a history row for the rest of the code
+                pct_change = 0
+                rsi = 50
+            else:
+                curr_price = hist['Close'].iloc[-1]
+                prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else curr_price
+                pct_change = ((curr_price - prev_close) / prev_close) * 100
+                rsi = calculate_rsi(hist['Close']).iloc[-1]
+
+            # 2. Intraday for Algorithms
+            intraday = stock.history(period="5d", interval="60m", prepost=True)
             vwap = calculate_vwap(intraday).iloc[-1] if not intraday.empty else curr_price
             algo_signal = detect_stealth_algo(intraday) if not intraday.empty else "---"
             
-            info = stock.info
-            target_price = info.get('targetMeanPrice', 0)
-            if target_price and target_price > 0: upside = ((target_price - curr_price) / curr_price) * 100
-            else: upside = 0
-            fair_val = calculate_graham_value(info.get('trailingEps', 0), info.get('bookValue', 0))
-            
-            news_items = info.get('news', [])
-            top_news = news_items[0] if news_items else {}
+            # 3. Fundamentals
+            try:
+                info = stock.info
+                target_price = info.get('targetMeanPrice', 0)
+                if target_price and target_price > 0: upside = ((target_price - curr_price) / curr_price) * 100
+                else: upside = 0
+                fair_val = calculate_graham_value(info.get('trailingEps', 0), info.get('bookValue', 0))
+                
+                news_items = info.get('news', [])
+                top_news = news_items[0] if news_items else {}
+                headline = top_news.get('title', 'No recent news')
+                link = top_news.get('link', '#')
+                publisher = top_news.get('publisher', 'Unknown')
+            except:
+                upside = 0
+                fair_val = 0
+                headline = "News Unavailable"
+                link = "#"
+                publisher = "N/A"
             
             row_data = {
                 "Ticker": ticker,
@@ -158,13 +179,18 @@ def fetch_market_data(stocks):
                 "Target Price": target_price,
                 "Upside %": upside,
                 "Fair Value": fair_val,
-                "Headline": top_news.get('title', 'No recent news'),
-                "Link": top_news.get('link', '#'),
-                "Publisher": top_news.get('publisher', 'Unknown')
+                "Headline": headline,
+                "Link": link,
+                "Publisher": publisher
             }
             row_data["🤖 AI Tip"] = ai_analyst(row_data)
             data_points.append(row_data)
-        except Exception: continue
+            
+            time.sleep(0.1)
+            
+        except Exception:
+            continue
+            
     return pd.DataFrame(data_points)
 
 # --- 5. RENDER DASHBOARD ---
@@ -175,12 +201,13 @@ while True:
         df = fetch_market_data(stock_list)
         
         if df.empty:
-            st.warning("⚠️ No data loaded yet. Markets might be closed or connection is slow.")
+            st.warning("⚠️ No data loaded. Check internet connection or Yahoo API status.")
+            if st.button("🔄 Retry"): st.cache_data.clear()
         else:
-            # --- MARKET RESUME SECTION (NEW) ---
+            # RESUME
             st.info(generate_market_resume(df))
             
-            # METRICS ROW
+            # METRICS
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("📅 Date", datetime.now().strftime("%Y-%m-%d"))
             c2.metric("🕒 Time", datetime.now().strftime("%H:%M:%S"))
@@ -202,7 +229,7 @@ while True:
                 with col_video:
                     st.subheader("🔴 Bloomberg Global Financial News (Live)")
                     st.video("https://www.youtube.com/watch?v=dp8PhLsUcFE")
-                    st.caption("Stream provided via YouTube. Content subject to broadcaster availability.")
+                    st.caption("Stream provided via YouTube.")
 
                 with col_news:
                     st.subheader("📰 Breaking Headlines")
