@@ -1,80 +1,106 @@
-# --- 1. UPDATED SOVEREIGN ENGINE ---
-class SovereignEngine:
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import scipy.stats as si
+from sklearn.linear_model import LinearRegression
+from datetime import datetime
+import time
+import random
+
+# --- 1. CORE MATH ENGINE (GREEKS & MEDALLION) ---
+class MedallionMath:
     @staticmethod
-    def get_tickers():
+    def calculate_greeks(S, K, T, sigma, r=0.045):
+        """Standard Black-Scholes Greeks"""
         try:
-            # Mining the full S&P 500 node
-            sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-            return sp500['Symbol'].tolist()
-        except:
-            return ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "SPY", "QQQ"]
+            d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+            delta = si.norm.cdf(d1)
+            theta = (-(S * si.norm.pdf(d1) * sigma) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * si.norm.cdf(d1 - sigma * np.sqrt(T))) / 252
+            return delta, theta
+        except: return 0, 0
 
     @staticmethod
-    def multi_node_mine(ticker_list):
-        """Bypasses the 4-stock limit using Staggered Chunks"""
-        all_data = {}
-        chunk_size = 20 # Nodes of 20 provide the best stability/speed ratio
-        
-        # FIX: Move progress tracking to the main area to avoid API Exceptions
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
+    def run_analysis(df, ticker):
+        """The Medallion Sovereign Matrix Logic"""
+        try:
+            if df is None or len(df) < 50: return None
+            curr = df['Close'].iloc[-1]
+            # Z-Score
+            ma, std = df['Close'].rolling(50).mean().iloc[-1], df['Close'].rolling(50).std().iloc[-1]
+            z = (curr - ma) / std
+            # Probability of Profit (ML Projection)
+            rets = df['Close'].pct_change().dropna()
+            sigma = rets.std() * np.sqrt(252)
+            y = df['Close'].tail(60).values
+            model = LinearRegression().fit(np.arange(len(y)).reshape(-1, 1), y)
+            target = model.predict([[len(y) + 30]])[0]
+            
+            # Greeks for 30D ATM Option
+            delta, theta = MedallionMath.calculate_greeks(curr, curr, 30/365, sigma)
+            
+            return {
+                "Symbol": ticker, "Price": curr, "Z-Score": z, 
+                "Delta": delta, "Theta": theta, "ML Target": target, "Vol": sigma
+            }
+        except: return None
 
-        for i in range(0, len(ticker_list), chunk_size):
-            chunk = ticker_list[i:i + chunk_size]
-            current_node = i + len(chunk)
-            
-            progress_text.markdown(f"📡 **Sovereign Mining:** Node {current_node} of {len(ticker_list)} assets...")
-            
-            # The Multi-Node Download
-            data = yf.download(chunk, period="1y", interval="1d", group_by='ticker', threads=True, progress=False)
-            
-            for t in chunk:
-                if t in data and not data[t].dropna().empty:
-                    all_data[t] = data[t]
-            
-            # Update Progress Bar (Ensures value stays between 0.0 and 1.0)
-            percent = min(current_node / len(ticker_list), 1.0)
-            progress_bar.progress(percent)
-            
-            # The Sovereign Pulse (Randomized delay to bypass security blocks)
-            time.sleep(random.uniform(1.2, 2.8))
-            
-        # Clean up progress UI after mining is complete
-        progress_text.empty()
-        progress_bar.empty()
-        return all_data
+# --- 2. MULTI-NODE DATA MINER ---
+def sovereign_mine(tickers):
+    """The Multi-Node Scraper: Prevents IP blocks by staggering chunks"""
+    all_data = {}
+    chunk_size = 25
+    # Progress UI must be inside the fragment body for stability
+    p_text = st.empty()
+    p_bar = st.progress(0)
+    
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i + chunk_size]
+        p_text.markdown(f"📡 **Mining Node Cluster:** {i} of {len(tickers)} assets...")
+        data = yf.download(chunk, period="1y", interval="1d", group_by='ticker', threads=True, progress=False)
+        for t in chunk:
+            if t in data and not data[t].dropna().empty: all_data[t] = data[t]
+        p_bar.progress(min((i + chunk_size) / len(tickers), 1.0))
+        time.sleep(random.uniform(1.5, 3.0)) # The Sovereign Pulse
+    
+    p_text.empty()
+    p_bar.empty()
+    return all_data
 
-# --- 2. UPDATED UI RENDER ---
-@st.fragment(run_every=900) # 15-Minute Sovereign Cycle
-def render_terminal():
-    st.title("💹 Sovereign Matrix | Institutional Multi-Node")
+# --- 3. THE COMMAND INTERFACE ---
+st.set_page_config(page_title="Sovereign Auto-Pilot Terminal", layout="wide")
+
+@st.fragment(run_every=900)
+def automated_terminal():
+    st.title("💹 Medallion Sovereign | Full Market Auto-Pilot")
     
-    engine = SovereignEngine()
-    # Scrape the full market tickers
-    ticker_list = engine.get_tickers()
+    # Auto-Scrape S&P 500 Node
+    try:
+        sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+        ticker_list = sp500['Symbol'].tolist()
+    except:
+        ticker_list = ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "AMZN", "META", "SPY", "QQQ"]
+
+    st.sidebar.info(f"Last Full Scan: {datetime.now().strftime('%H:%M:%S')}")
     
-    with st.status("Initializing Distributed Node Clusters...", expanded=True) as status:
-        data_mesh = engine.multi_node_mine(ticker_list)
-        status.update(label="Deep Scan Complete. Vectorizing Algorithms...", state="complete", expanded=False)
+    with st.status("Initializing Distributed Multi-Node Clusters...", expanded=True) as status:
+        data_mesh = sovereign_mine(ticker_list)
+        status.update(label="Matrix Synchronized. Vectorizing ML Models...", state="complete", expanded=False)
         
-        # Matrix Math (Z-Score & PoP)
         results = []
         for t, df in data_mesh.items():
-            try:
-                # Medallion-grade feature extraction
-                curr = df['Close'].iloc[-1]
-                z = (curr - df['Close'].rolling(50).mean().iloc[-1]) / df['Close'].rolling(50).std().iloc[-1]
-                sigma = df['Close'].pct_change().std() * np.sqrt(252)
-                results.append({"Symbol": t, "Price": curr, "Z-Score": z, "Volatility": sigma})
-            except: continue
+            res = MedallionMath.run_analysis(df, t)
+            if res: results.append(res)
 
     if results:
         df_final = pd.DataFrame(results)
-        st.subheader("📊 Global Command Matrix")
+        st.subheader("🏛️ Global Command Matrix")
         st.dataframe(
             df_final.style.background_gradient(subset=['Z-Score'], cmap='RdYlGn_r')
-            .format({"Price": "${:.2f}", "Z-Score": "{:.2f}", "Volatility": "{:.1%}"}),
+            .format({"Price": "${:.2f}", "Z-Score": "{:.2f}", "Delta": "{:.2f}", "Theta": "{:.3f}", "ML Target": "${:.2f}", "Vol": "{:.1%}"}),
             use_container_width=True, hide_index=True, height=600
         )
     else:
-        st.error("Protocol Failure: Node Cluster Blocked. IP Refresh required.")
+        st.error("Connection Blocked. IP Refresh required in next cycle.")
+
+automated_terminal()
