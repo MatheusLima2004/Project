@@ -5,8 +5,9 @@ import numpy as np
 import scipy.stats as si
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
+import time
 
-# --- 1. SOVEREIGN THEME & LAYOUT ---
+# --- 1. SOVEREIGN THEME ---
 st.set_page_config(page_title="Medallion Sovereign Terminal", layout="wide")
 
 st.markdown("""
@@ -17,17 +18,17 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DEEP OPTIONS & MEDALLION ML ENGINE ---
+# --- 2. THE SOVEREIGN ENGINE (ML & OPTIONS) ---
 
 def run_sovereign_logic(df, ticker):
     try:
-        if df is None or len(df) < 50: return None
+        if df is None or len(df) < 60: return None
         
-        # Z-Score (Mean Reversion)
-        ma_50 = df['Close'].rolling(50).mean()
-        std_50 = df['Close'].rolling(50).std()
+        # Z-Score (Statistical Mean Reversion)
+        ma_60 = df['Close'].rolling(60).mean()
+        std_60 = df['Close'].rolling(60).std()
         curr = df['Close'].iloc[-1]
-        z_score = (curr - ma_50.iloc[-1]) / std_50.iloc[-1]
+        z_score = (curr - ma_60.iloc[-1]) / std_60.iloc[-1]
         
         # Kelly Criterion (Sizing)
         rets = df['Close'].pct_change().dropna()
@@ -35,13 +36,13 @@ def run_sovereign_logic(df, ticker):
         win_loss = rets[rets > 0].mean() / abs(rets[rets < 0].mean()) if not rets[rets < 0].empty else 1
         kelly = (win_rate * (win_loss + 1) - 1) / win_loss
         
-        # ML Price Forecast (30-Day Projection)
-        y = df['Close'].tail(60).values
+        # ML Price Forecast (Next 30 Trading Days)
+        y = df['Close'].tail(90).values
         x = np.arange(len(y)).reshape(-1, 1)
         model = LinearRegression().fit(x, y)
         forecast = model.predict([[len(y) + 30]])[0]
         
-        # Options ML: Probability of Success (PoP)
+        # Options PoP (Probability of Profit)
         sigma = rets.std() * np.sqrt(252)
         days_to_expiry = 30 / 365
         d2 = (np.log(curr / forecast) + (0.045 - 0.5 * sigma**2) * days_to_expiry) / (sigma * np.sqrt(days_to_expiry))
@@ -49,7 +50,7 @@ def run_sovereign_logic(df, ticker):
         
         # TOC Squeeze (TTM Logic)
         atr = (df['High'] - df['Low']).rolling(20).mean().iloc[-1]
-        squeeze = "🔒 SQUEEZE" if (2 * std_50.iloc[-1] < 1.5 * atr) else "🌊 EXPANSION"
+        squeeze = "🔒 SQUEEZE" if (2 * std_60.iloc[-1] < 1.5 * atr) else "🌊 EXPANSION"
 
         return {
             "Symbol": ticker, "Price": curr, "Z-Score": z_score, 
@@ -58,38 +59,45 @@ def run_sovereign_logic(df, ticker):
         }
     except: return None
 
-# --- 3. 12-MINUTE DEEP SCAN FRAGMENT ---
+# --- 3. THE 15-MINUTE DEEP SCAN FRAGMENT ---
 
-@st.fragment(run_every=720)
+@st.fragment(run_every=900)
 def sovereign_render(ticker_list):
     st.markdown("<h2 style='color:#58a6ff;'>Sovereign Medallion Command</h2>", unsafe_allow_html=True)
     
     col_stat1, col_stat2, col_stat3 = st.columns(3)
-    col_stat1.metric("Cycle Interval", "12:00 MIN", "DEEP ML SCAN")
-    col_stat2.metric("Sync Status", "LIVE", f"T+{datetime.now().strftime('%S')}s")
+    col_stat1.metric("Cycle Interval", "15:00 MIN", "MAX DEEP SCAN")
+    col_stat2.metric("Sync Status", "PROTECTED", f"SYNC: {datetime.now().strftime('%H:%M:%S')}")
     col_stat3.metric("Assets Analyzed", len(ticker_list))
 
-    with st.spinner("Executing Deep ML Intelligence..."):
-        df_mega = yf.download(ticker_list, period="2y", interval="1d", group_by='ticker', threads=True, progress=False)
-        
+    with st.spinner("Executing Staggered Multi-Source Intelligence..."):
+        # We download in a staggered way to prevent "Connection Interrupted"
         results, news_feed = [], []
-        for t in ticker_list:
-            res = run_sovereign_logic(df_mega[t], t)
-            if res: 
-                results.append(res)
-                try:
-                    n = yf.Ticker(t).news[:1]
-                    for item in n: news_feed.append({"symbol": t, "title": item['title'], "link": item['link']})
-                except: pass
+        
+        # Split tickers into small batches to avoid Yahoo rate-limiting
+        batch_size = 15
+        for i in range(0, len(ticker_list), batch_size):
+            batch = ticker_list[i:i + batch_size]
+            df_batch = yf.download(batch, period="2y", interval="1d", group_by='ticker', threads=True, progress=False)
+            
+            for t in batch:
+                res = run_sovereign_logic(df_batch[t], t)
+                if res: 
+                    results.append(res)
+                    try:
+                        n = yf.Ticker(t).news[:1]
+                        for item in n: news_feed.append({"symbol": t, "title": item['title'], "link": item['link']})
+                    except: pass
+            
+            # Short rest between batches to "humanize" the traffic
+            time.sleep(2)
 
     col_main, col_news = st.columns([3, 1])
     
     with col_main:
         if results:
             df_res = pd.DataFrame(results)
-            styled_df = df_res.style
-            if 'PoP %' in df_res.columns:
-                styled_df = styled_df.background_gradient(subset=['PoP %'], cmap='RdYlGn')
+            styled_df = df_res.style.background_gradient(subset=['PoP %'], cmap='RdYlGn')
             
             st.dataframe(
                 styled_df.format({
@@ -99,10 +107,9 @@ def sovereign_render(ticker_list):
                 use_container_width=True, hide_index=True, height=500
             )
         else:
-            st.error("Connection Interrupted. Check your ticker symbols.")
+            st.error("Connection Blocked by Exchange. Yahoo has limited this IP. Waiting for next cycle...")
         
-        # TradingView Chart
-        st.subheader(f"📈 Real-Time Feed: {ticker_list[0]}")
+        # Real-time Chart
         st.components.v1.html(f"""
             <div id="tv-chart" style="height:450px;"></div>
             <script src="https://s3.tradingview.com/tv.js"></script>
@@ -119,7 +126,6 @@ def sovereign_render(ticker_list):
 # --- 4. SIDEBAR ---
 with st.sidebar:
     st.header("Asset Universe")
-    # THE FIX: Ensured the string is properly opened and closed on one line or using triple quotes
     default_list = "AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL, META, NFLX, AMD, PLTR, VALE3.SA, PETR4.SA, ITUB4.SA, SPY, QQQ"
     raw_tickers = st.text_area("Ticker List", default_list, height=300)
     ticker_list = [x.strip() for x in raw_tickers.split(',') if x.strip()]
