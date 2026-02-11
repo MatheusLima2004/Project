@@ -3,77 +3,89 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import time
-from datetime import datetime
 
 # --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Cloud Medallion", layout="wide")
+st.set_page_config(page_title="Global Mega-Scanner", layout="wide")
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #0e1117; color: white; }
-    .stMetric { background-color: #1e2127; border: 1px solid #333; padding: 15px; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
+st.title("🌐 Global Mega-Scanner (S&P 500 + B3)")
 
-st.title("🧬 Medallion Cloud Scanner")
-st.info("💡 **Note:** To prevent being blocked by Yahoo, this version scans stocks one by one with a delay.")
-
-# --- 2. SIDEBAR ---
-with st.sidebar:
-    st.header("Watchlist")
-    # Using a smaller list by default to ensure it loads successfully
-    tickers = st.text_area("Tickers (Comma separated)", "SPY, QQQ, NVDA, AAPL, TSLA", height=150)
-    ticker_list = [x.strip() for x in tickers.split(',')]
-    start_btn = st.button("🚀 START CLOUD SCAN", type="primary")
-
-# --- 3. DATA ENGINE ---
-if start_btn:
-    results = []
-    progress_bar = st.progress(0)
+# --- 2. THE BIG LIST (Hundreds of Stocks) ---
+def get_massive_watchlist():
+    # S&P 500 Top Movers + Popular Tech
+    us_stocks = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "BRK-B", "UNH", "V", 
+        "JPM", "JNJ", "WMT", "MA", "PG", "HD", "CVX", "LLY", "ABBV", "PFE", 
+        "COST", "PEP", "KO", "ORCL", "BAC", "AVGO", "TMO", "CSCO", "ACN", "ADBE"
+    ]
     
-    for i, t in enumerate(ticker_list):
+    # Brazil B3 Top Movers
+    br_stocks = [
+        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "ABEV3.SA", 
+        "WEGE3.SA", "B3SA3.SA", "RENT3.SA", "SUZB3.SA", "GGBR4.SA", "JBSS3.SA",
+        "LREN3.SA", "RDOR3.SA", "RAIL3.SA", "EQTL3.SA", "VIVT3.SA", "PRIO3.SA"
+    ]
+    
+    # Major ETFs
+    etfs = ["SPY", "QQQ", "IWM", "EEM", "GLD", "SLV", "DIA", "XLE", "XLF", "XLK"]
+    
+    # If you want even more, we can add a list of 500+ here.
+    return us_stocks + br_stocks + etfs
+
+# --- 3. THE BATCH ENGINE ---
+@st.cache_data(ttl=3600)
+def run_mega_scan(tickers):
+    # This downloads ALL tickers at once (The most efficient way)
+    data = yf.download(tickers, period="5d", interval="1d", group_by='ticker')
+    
+    results = []
+    for ticker in tickers:
         try:
-            # We use a smaller time window (5 days) to be "quieter" on the API
-            stock = yf.Ticker(t)
-            hist = stock.history(period="5d")
-            
+            # Extract individual stock data from the mega-block
+            hist = data[ticker]
             if not hist.empty:
                 curr = hist['Close'].iloc[-1]
                 prev = hist['Close'].iloc[-2]
                 change = ((curr - prev) / prev) * 100
                 
-                # AI Logic
-                tip = "HOLD"
-                if change < -2: tip = "✅ BUY DIP"
-                elif change > 2: tip = "⚠️ SELL/TRIM"
+                # Fair Value (Calculated only if data is available)
+                # Note: Info fetching for 500 stocks is slow, so we focus on Price/Trend
                 
                 results.append({
-                    "Ticker": t,
+                    "Ticker": ticker,
                     "Price": curr,
                     "Change %": change,
-                    "Signal": tip
+                    "Signal": "🚀 BUY" if change < -1.5 else ("📉 SELL" if change > 1.5 else "😴 HOLD")
                 })
+        except:
+            continue
             
-            # CRUCIAL: Wait 1 second between stocks so Yahoo doesn't block the cloud server
-            time.sleep(1.5)
-            
-        except Exception as e:
-            st.error(f"Error loading {t}. Yahoo may be temporarily blocking requests.")
-            
-        progress_bar.progress((i + 1) / len(ticker_list))
+    return pd.DataFrame(results)
 
-    if results:
-        df = pd.DataFrame(results)
-        st.subheader("📊 Market Intelligence")
+# --- 4. RENDER DASHBOARD ---
+tickers = get_massive_watchlist()
+
+if st.button(f"🚀 SCAN {len(tickers)} ASSETS NOW"):
+    with st.spinner("Analyzing Global Markets..."):
+        df = run_mega_scan(tickers)
+        
+    if not df.empty:
+        # Sort by biggest gainers
+        df = df.sort_values(by="Change %", ascending=False)
+        
+        # Display Metrics
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Assets Scanned", len(df))
+        c2.metric("Market Leader", df.iloc[0]['Ticker'], f"{df.iloc[0]['Change %']:.2f}%")
+        c3.metric("Market Laggard", df.iloc[-1]['Ticker'], f"{df.iloc[-1]['Change %']:.2f}%")
+        
+        # Display Results
         st.dataframe(
             df.style.background_gradient(subset=['Change %'], cmap='RdYlGn'),
-            use_container_width=True, hide_index=True
+            use_container_width=True,
+            height=800
         )
     else:
-        st.error("Connection Failed. Yahoo is currently blocking this cloud server. Try again in 10 minutes.")
+        st.error("Connection lost. Yahoo is blocking this cloud request. Try again in a few minutes.")
 
 else:
-    st.markdown("### 👋 Welcome back.")
-    st.write("1. Update your tickers in the sidebar.")
-    st.write("2. Click **Start Cloud Scan**.")
-    st.write("3. If it fails, wait a few minutes—Yahoo is likely rate-limiting the server.")
+    st.info("Click the button to scan hundreds of assets simultaneously.")
