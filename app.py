@@ -44,11 +44,10 @@ def run_sovereign_logic(df, ticker):
         # Options ML: Probability of Success (PoP)
         sigma = rets.std() * np.sqrt(252)
         days_to_expiry = 30 / 365
-        # d2 calculation for probability stock is above forecast
         d2 = (np.log(curr / forecast) + (0.045 - 0.5 * sigma**2) * days_to_expiry) / (sigma * np.sqrt(days_to_expiry))
         pop = si.norm.cdf(abs(d2)) * 100
         
-        # TOC Squeeze
+        # TOC Squeeze (TTM Logic)
         atr = (df['High'] - df['Low']).rolling(20).mean().iloc[-1]
         squeeze = "🔒 SQUEEZE" if (2 * std_50.iloc[-1] < 1.5 * atr) else "🌊 EXPANSION"
 
@@ -88,9 +87,6 @@ def sovereign_render(ticker_list):
     with col_main:
         if results:
             df_res = pd.DataFrame(results)
-            
-            # --- THE FIX: Conditional Styling ---
-            # This ensures the code doesn't crash if 'PoP %' is missing
             styled_df = df_res.style
             if 'PoP %' in df_res.columns:
                 styled_df = styled_df.background_gradient(subset=['PoP %'], cmap='RdYlGn')
@@ -103,7 +99,7 @@ def sovereign_render(ticker_list):
                 use_container_width=True, hide_index=True, height=500
             )
         else:
-            st.error("No data could be analyzed. Check your internet connection or ticker symbols.")
+            st.error("Connection Interrupted. Check your ticker symbols.")
         
         # TradingView Chart
         st.subheader(f"📈 Real-Time Feed: {ticker_list[0]}")
@@ -123,4 +119,9 @@ def sovereign_render(ticker_list):
 # --- 4. SIDEBAR ---
 with st.sidebar:
     st.header("Asset Universe")
-    default_list = "
+    # THE FIX: Ensured the string is properly opened and closed on one line or using triple quotes
+    default_list = "AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL, META, NFLX, AMD, PLTR, VALE3.SA, PETR4.SA, ITUB4.SA, SPY, QQQ"
+    raw_tickers = st.text_area("Ticker List", default_list, height=300)
+    ticker_list = [x.strip() for x in raw_tickers.split(',') if x.strip()]
+
+sovereign_render(ticker_list)
