@@ -1,58 +1,77 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime
 import yfinance as yf
-from engine import get_full_market_tickers, run_medallion_math
+import pandas as pd
+import numpy as np
+import scipy.stats as si
+from sklearn.linear_model import LinearRegression
+from datetime import datetime
+import time
+import random
 
-# --- 1. UI CONFIG ---
-st.set_page_config(page_title="Sovereign Command Terminal", layout="wide")
+# --- 1. SOVEREIGN ENGINE CLASS (Internalized) ---
+class SovereignEngine:
+    @staticmethod
+    def get_tickers():
+        try:
+            sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+            return sp500['Symbol'].tolist()[:100] # Scanning top 100 to ensure speed
+        except:
+            return ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "SPY", "QQQ"]
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #0b0e11; color: #e1e4e8; }
-    .stMetric { background-color: #15191e; border: 1px solid #2d333b; padding: 15px; border-radius: 4px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. DEEP SCAN FRAGMENT (12-MIN CYCLE) ---
-@st.fragment(run_every=720)
-def render_terminal():
-    st.title("💹 Sovereign Elite | Command Center")
-    
-    ticker_list = get_full_market_tickers()
-    
-    # Platform Metrics
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Universe", f"{len(ticker_list)} Assets")
-    c2.metric("Cycle Status", "12-MIN DEEP SCAN")
-    c3.metric("Last Sync", datetime.now().strftime("%H:%M:%S"))
-
-    with st.spinner("Synchronizing Multi-Node Data Mines..."):
-        df_mega = yf.download(ticker_list, period="1y", interval="1d", group_by='ticker', threads=True, progress=False)
+    @staticmethod
+    def multi_node_mine(ticker_list):
+        """Bypasses the 4-stock limit using Staggered Chunks"""
+        all_data = {}
+        chunk_size = 15 # Small nodes stay under the radar
         
-        results = []
-        for t in ticker_list:
-            res = run_medallion_math(df_mega[t], t)
-            if res: results.append(res)
+        progress_bar = st.sidebar.progress(0)
+        status_text = st.sidebar.empty()
+
+        for i in range(0, len(ticker_list), chunk_size):
+            chunk = ticker_list[i:i + chunk_size]
+            status_text.text(f"Mining Node: {i}-{i+chunk_size}")
+            
+            data = yf.download(chunk, period="1y", interval="1d", group_by='ticker', threads=True, progress=False)
+            
+            for t in chunk:
+                if t in data: all_data[t] = data[t]
+            
+            # Update Progress
+            progress_bar.progress(min((i + chunk_size) / len(ticker_list), 1.0))
+            time.sleep(random.uniform(1.0, 2.5)) # The Sovereign Pulse
+            
+        return all_data
+
+# --- 2. UI & MATRIX RENDER ---
+st.set_page_config(page_title="Sovereign Command Matrix", layout="wide")
+
+@st.fragment(run_every=900) # 15-Minute Cycle for maximum IP safety
+def render_terminal():
+    st.title("💹 Sovereign Matrix | Institutional Multi-Node")
     
+    engine = SovereignEngine()
+    tickers = engine.get_tickers()
+    
+    with st.spinner(f"Mining {len(tickers)} Assets across Multi-Node Clusters..."):
+        data_mesh = engine.multi_node_mine(tickers)
+        
+        # Matrix Math
+        results = []
+        for t, df in data_mesh.items():
+            try:
+                if len(df) < 50: continue
+                curr = df['Close'].iloc[-1]
+                # Z-Score
+                z = (curr - df['Close'].rolling(50).mean().iloc[-1]) / df['Close'].rolling(50).std().iloc[-1]
+                # PoP %
+                sigma = df['Close'].pct_change().std() * np.sqrt(252)
+                results.append({"Symbol": t, "Price": curr, "Z-Score": z, "Volatility": sigma})
+            except: continue
+
     if results:
         df_final = pd.DataFrame(results)
-        st.subheader("📊 Global Intelligence Matrix")
-        st.dataframe(
-            df_final.style.background_gradient(subset=['PoP %'], cmap='RdYlGn')
-            .format({"Price": "${:.2f}", "Z-Score": "{:.2f}", "Kelly %": "{:.1f}%", "ML Target": "${:.2f}", "PoP %": "{:.1f}%"}),
-            use_container_width=True, hide_index=True, height=600
-        )
-        
-        # Live Chart
-        st.subheader(f"📈 Execution Feed: {ticker_list[0]}")
-        st.components.v1.html(f"""
-            <div id="tv-chart" style="height:400px;"></div>
-            <script src="https://s3.tradingview.com/tv.js"></script>
-            <script>
-            new TradingView.widget({{"width": "100%", "height": 400, "symbol": "{ticker_list[0]}", "interval": "D", "theme": "dark", "style": "1", "container_id": "tv-chart"}});
-            </script>
-        """, height=400)
+        st.dataframe(df_final.style.background_gradient(subset=['Z-Score'], cmap='RdYlGn_r'), use_container_width=True)
+    else:
+        st.error("Protocol Failure: Node Cluster Blocked. Check logs.")
 
-# --- 3. EXECUTION ---
 render_terminal()
